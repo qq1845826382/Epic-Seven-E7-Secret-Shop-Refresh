@@ -1,6 +1,6 @@
 #import built-in
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from PIL import ImageTk, Image
 import csv
 import os
@@ -19,14 +19,15 @@ from PIL import ImageGrab
 import random
 
 class ShopItem:
-    def __init__(self, path='', image=None, price=0, count=0):
+    def __init__(self, path='', image=None, price=0, count=0, target_count=None):
         self.path=path
         self.image=image
         self.price=price
         self.count=count
+        self.target_count=target_count
 
     def __repr__(self):
-        return f'ShopItem(path={self.path}, image={self.image}, price={self.price}, count={self.count})'
+        return f'ShopItem(path={self.path}, image={self.image}, price={self.price}, count={self.count}, target_count={self.target_count})'
 
 class RefreshStatistic:
     def __init__(self):
@@ -37,11 +38,11 @@ class RefreshStatistic:
     def updateTime(self):
         self.start_time = datetime.now()
 
-    def addShopItem(self, path: str, name='', price=0, count=0):
+    def addShopItem(self, path: str, name='', price=0, count=0, target_count=None):
         #load image using cv2, need to convert from BGR to RGB
         image = cv2.imread(os.path.join('assets', path))
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        newItem = ShopItem(path, image, price, count)
+        newItem = ShopItem(path, image, price, count, target_count)
         self.items[name] = newItem
     
     def getInventory(self):
@@ -55,6 +56,9 @@ class RefreshStatistic:
     
     def getItemCount(self):
         return [shop_item.count for shop_item in self.items.values()]
+
+    def getItemTargetCount(self):
+        return [shop_item.target_count for shop_item in self.items.values()]
     
     def getTotalCost(self):
         total = 0
@@ -112,6 +116,30 @@ class SecretShopRefresh:
 
         self.tk_instance = tk_instance
         self.rs_instance = RefreshStatistic()
+
+    def getSkystoneSpent(self):
+        return self.rs_instance.refresh_count * 3
+
+    def getRemainingRefreshCount(self):
+        if not self.budget:
+            return None
+        return max(0, self.budget // 3 - self.rs_instance.refresh_count)
+
+    def allItemTargetsReached(self):
+        has_target = False
+        for shop_item in self.rs_instance.getInventory().values():
+            if shop_item.target_count is None:
+                continue
+            has_target = True
+            if shop_item.count < shop_item.target_count:
+                return False
+        return has_target
+
+    def shouldStopForTargets(self):
+        return self.allItemTargetsReached()
+
+    def shouldStopForBudget(self):
+        return self.budget is not None and self.rs_instance.refresh_count >= self.budget // 3
 
     #Start shop refresh macro
     def start(self):
@@ -171,11 +199,12 @@ class SecretShopRefresh:
         def updateMiniDisplay():
             for label, count in zip(mini_labels, self.rs_instance.getItemCount()):
                 label.config(text=count)
+            self.updateMiniStatusDisplay(hint)
             
         time.sleep(self.mouse_sleep)
         
         if not self.loop_active:
-            if hint: hint.destroy()
+            if hint: self.updateMiniStatusDisplay(hint, finished=True)
             self.loop_finish = True
             self.callback()
             return
@@ -247,6 +276,7 @@ class SecretShopRefresh:
                 #real time count UI update
                 if hint: updateMiniDisplay()
                 if not self.loop_active: break
+                if self.shouldStopForTargets(): break
                 
                 #scroll shop
                 self.scrollShop()
@@ -290,28 +320,29 @@ class SecretShopRefresh:
 
                 if hint: updateMiniDisplay()
                 if not self.loop_active: break
+                if self.shouldStopForTargets(): break
                 
                 #check budget
-                if self.budget:
-                    if self.rs_instance.refresh_count >= self.budget // 3:
-                        break
+                if self.shouldStopForBudget():
+                    break
                     
                 #refresh shop
                 self.clickRefresh()
                 self.rs_instance.incrementRefreshCount()
+                if hint: self.updateMiniStatusDisplay(hint)
                 time.sleep(self.mouse_sleep)
                 if self.window.title != self.title_name: break
 
         except Exception as e:
             print(e)
-            if hint: hint.destroy()
+            if hint: self.updateMiniStatusDisplay(hint, finished=True)
             self.rs_instance.writeToCSV()
             self.loop_active = False
             self.loop_finish = True
             self.callback()
             return
             
-        if hint: hint.destroy()
+        if hint: self.updateMiniStatusDisplay(hint, finished=True)
         self.rs_instance.writeToCSV()
         self.loop_active = False
         self.loop_finish = True
@@ -345,11 +376,28 @@ class SecretShopRefresh:
             mini_labels.append(count)
             frame.pack()
         mini_stats.pack()
+        hint.status_label = tk.Label(master=hint, text='', justify=tk.LEFT, bg=bg_color, fg=fg_color)
+        hint.status_label.pack(pady=(8, 0))
+        self.updateMiniStatusDisplay(hint)
         return hint, mini_labels
 
+    def updateMiniStatusDisplay(self, hint, finished=False):
+        if hint is None or not hasattr(hint, 'status_label'):
+            return
+        remaining_refresh_count = self.getRemainingRefreshCount()
+        remaining_text = 'Unlimited' if remaining_refresh_count is None else str(remaining_refresh_count)
+        status = [
+            f'Skystone spent: {self.getSkystoneSpent()}',
+            f'Refresh count: {self.rs_instance.refresh_count}',
+            f'Remaining refresh: {remaining_text}',
+        ]
+        if finished:
+            status.append('Finished!')
+        hint.status_label.config(text='\n'.join(status))
+
     #add item to list
-    def addShopItem(self, path: str, name='', price=0, count=0):
-        self.rs_instance.addShopItem(path, name, price, count)
+    def addShopItem(self, path: str, name='', price=0, count=0, target_count=None):
+        self.rs_instance.addShopItem(path, name, price, count, target_count)
 
     #take screenshot of entire window
     def takeScreenshot(self):
@@ -527,6 +575,7 @@ class AppConfig():
         # here is where you can config setting
         #general setting
         self.RECOGNIZE_TITLES = {'Epic Seven',
+                                 '第七史诗',
                                  'BlueStacks App Player',
                                  'LDPlayer',
                                  'MuMu Player 12',
@@ -536,7 +585,7 @@ class AppConfig():
         self.ALL_ITEMS = [['cov.png', 'Covenant bookmark', 184000],
                           ['mys.png', 'Mystic medal', 280000],
                           ['fb.png', 'Friendship bookmark', 18000]]
-        self.MANDATORY_PATH = {'cov.png', 'mys.png'}        #make item unable to be unselected
+        self.MANDATORY_PATH = set()        #make item unable to be unselected
         self.DEBUG = False
         
 
@@ -554,14 +603,15 @@ class AutoRefreshGUI:
         #self.root.attributes("-alpha", 0.95)
 
         self.root.title('SHOP AUTO REFRESH')
-        self.root.geometry('420x745')
-        self.root.minsize(420, 745)
+        self.root.geometry('460x820')
+        self.root.minsize(460, 820)
         icon_path = os.path.join('assets', 'gui_icon.ico')
         self.root.iconbitmap(icon_path)
         self.title_name = ''
         self.mouse_speed = 0.3
         self.screenshot_speed = 0.3
         self.ignore_path = {'fb.png'}
+        self.item_target_entries = {}
         self.keep_image_open = []
         self.lock_start_button = False
         self.budget = ''
@@ -598,6 +648,7 @@ class AutoRefreshGUI:
 
         titles_combo_box = ttk.Combobox(master=self.root,
                                     values=titles)
+        titles_combo_box.set('第七史诗')
         titles_combo_box.config()       #apply ui change here
         titles_combo_box.bind('<<ComboboxSelected>>', onSelect)
         titles_combo_box.bind('<KeyRelease>', onEnter)
@@ -662,8 +713,9 @@ class AutoRefreshGUI:
                                 state=tk.DISABLED,
                                 command=self.startShopRefresh)
         #check if recognize titles match with any window
-        if titles:
-            for t in titles:
+        preferred_titles = ['第七史诗'] + [title for title in titles if title != '第七史诗']
+        if preferred_titles:
+            for t in preferred_titles:
                 if t in gw.getAllTitles():
                     self.title_name = t
                     titles_combo_box.set(self.title_name)
@@ -689,9 +741,10 @@ class AutoRefreshGUI:
         titles_combo_box.pack()
         #Step 2 Select item
         self.packMessage('Select item that you are looking for:')
+        self.packMessage('Target count is optional; selected items are still bought whenever they appear.', 10, (0,5))
         for index, item in enumerate(self.app_config.ALL_ITEMS):
             self.keep_image_open.append(ImageTk.PhotoImage(Image.open(os.path.join('assets', item[0]))))
-            self.packItem(index, item[0])
+            self.packItem(index, item[0], item[1])
         self.packMessage('Setting:', 18, (10,0))
         #Step 3 Select setting
         #check if input is valid
@@ -723,7 +776,7 @@ class AutoRefreshGUI:
         self.screenshot_speed_entry.config(validate='key', validatecommand=(valid_float_reg, '%P', '%d'))
 
         valid_int_reg = self.root.register(validateInt)
-        self.limit_spend_entry = packSettingEntry('How many skystone do you want to spend? :', None)
+        self.limit_spend_entry = packSettingEntry('Skystone budget:', None)
         self.limit_spend_entry.config(validate='key', validatecommand=(valid_int_reg, '%P'))
 
         #Step 3.5 special setting and setting
@@ -735,7 +788,7 @@ class AutoRefreshGUI:
         
         self.root.mainloop()
         
-    def packItem(self, index, path):        #change ui here
+    def packItem(self, index, path, name):        #change ui here
 
         def updateIgnore():
             if cbv.get() == 1:
@@ -743,7 +796,7 @@ class AutoRefreshGUI:
             else:
                 self.ignore_path.add(path)
         
-        cbv = tk.IntVar()
+        cbv = tk.IntVar(value=0 if path in self.ignore_path else 1)
         frame = tk.Frame(self.root, bg=self.unite_bg_color, pady=10)
         cb = tk.Checkbutton(master=frame, variable=cbv, command=updateIgnore, bg=self.unite_bg_color)
         cb.pack(side=tk.LEFT)
@@ -753,7 +806,20 @@ class AutoRefreshGUI:
             cb.select()
         
         image_label = tk.Label(master=frame, image=self.keep_image_open[index], bg='#FFBF00')
-        image_label.pack(side=tk.RIGHT)
+        image_label.pack(side=tk.LEFT)
+        target_label = tk.Label(master=frame,
+                                text=f'{name} target:',
+                                bg=self.unite_bg_color,
+                                fg=self.unite_text_color,
+                                font=('Helvetica',10))
+        target_label.pack(side=tk.LEFT, padx=(8, 4))
+        target_entry = tk.Entry(master=frame,
+                                bg='#333333',
+                                fg=self.unite_text_color,
+                                font=('Helvetica',10),
+                                width=8)
+        target_entry.pack(side=tk.RIGHT)
+        self.item_target_entries[path] = target_entry
         frame.pack()
 
     def packMessage(self, message, text_size=14, pady=10):               #apply ui change here
@@ -769,10 +835,40 @@ class AutoRefreshGUI:
 
     #start refresh loop    
     def startShopRefresh(self):
+        #setting up skystone budget
+        budget = None
+        if self.limit_spend_entry.get() != '':
+            budget = int(self.limit_spend_entry.get())
+            if budget <= 0:
+                messagebox.showerror('Invalid setting', 'Skystone budget must be greater than 0 when it is set.')
+                return
+
+        item_targets = {}
+        for item in self.app_config.ALL_ITEMS:
+            path = item[0]
+            if path in self.ignore_path:
+                continue
+            target_value = self.item_target_entries[path].get()
+            if target_value == '':
+                continue
+            try:
+                target_count = int(target_value)
+            except ValueError:
+                messagebox.showerror('Invalid setting', f'{item[1]} target must be a positive integer.')
+                return
+            if target_count <= 0:
+                messagebox.showerror('Invalid setting', f'{item[1]} target must be greater than 0 when it is set.')
+                return
+            item_targets[path] = target_count
+
+        if budget is None and not item_targets:
+            messagebox.showerror('Invalid setting', 'Set at least one positive goal: skystone budget or selected bookmark target count.')
+            return
+
         self.root.title('Press ESC to stop!')
         self.lock_start_button = True
         self.start_button.config(state=tk.DISABLED)
-        self.ssr = SecretShopRefresh(title_name=self.title_name, callback=self.refreshComplete, debug=self.app_config.DEBUG)
+        self.ssr = SecretShopRefresh(title_name=self.title_name, callback=self.refreshComplete, budget=budget, debug=self.app_config.DEBUG)
 
         if self.hint_cbv.get():
             self.ssr.tk_instance = self.root
@@ -783,7 +879,7 @@ class AutoRefreshGUI:
         #setting item to refresh for
         for item in self.app_config.ALL_ITEMS:
             if item[0] not in self.ignore_path:
-                self.ssr.addShopItem(path=item[0], name=item[1], price=item[2])
+                self.ssr.addShopItem(path=item[0], name=item[1], price=item[2], target_count=item_targets.get(item[0]))
         
         #setting mouse speed
         self.ssr.mouse_sleep = float(self.mouse_speed_entry.get()) if self.mouse_speed_entry.get() != '' else self.mouse_speed
@@ -791,12 +887,9 @@ class AutoRefreshGUI:
         self.ssr.mouse_sleep = max(0.01, self.ssr.mouse_sleep)
         self.ssr.screenshot_sleep = max(0.01, self.ssr.screenshot_sleep)
 
-        #setting up skystone budget
-        if self.limit_spend_entry.get() != '':
-            self.ssr.budget = int(self.limit_spend_entry.get())
-
         print('refresh shop start!')
         print('Budget:', self.ssr.budget)
+        print('Item targets:', item_targets)
         print('Mouse speed:', self.ssr.mouse_sleep)
         print('Screenshot speed', self.ssr.screenshot_sleep)
         if self.ssr.budget and self.ssr.budget >= 1000:
