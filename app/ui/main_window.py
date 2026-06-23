@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pygetwindow as gw
 from PySide6.QtCore import QThread, Qt
-from PySide6.QtGui import QCloseEvent, QIcon, QPixmap
+from PySide6.QtGui import QCloseEvent, QIcon, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QPlainTextEdit,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QTabWidget,
@@ -45,6 +46,12 @@ class MainWindow(QMainWindow):
         self.worker: RefreshWorker | None = None
         self.item_controls: dict[str, dict[str, object]] = {}
         self.status_labels: dict[str, BodyLabel] = {}
+        self.item_grid: QGridLayout | None = None
+        self.item_cards: list[QWidget] = []
+        self.item_grid_columns = 0
+        self.item_count_grid: QGridLayout | None = None
+        self.item_count_columns = 0
+        self.latest_item_counts: dict[str, int] = {}
 
         self.logger = logging.getLogger("e7shop")
         self.logger.setLevel(logging.INFO)
@@ -57,7 +64,8 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("第七史诗神秘商店助手")
         # 默认窗口从原来的大尺寸收窄，避免启动后占用过多桌面空间；内容通过选项卡分组承载。
-        self.resize(1040, 760)
+        self.resize(980, 720)
+        self.setMinimumSize(640, 520)
         if WINDOW_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(WINDOW_ICON_PATH)))
 
@@ -117,8 +125,19 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 10, 0, 0)
         layout.setSpacing(10)
-        layout.addWidget(self._build_status_card())
-        layout.addWidget(self._build_log_card(), 1)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+        scroll_content = QWidget()
+        running_layout = QVBoxLayout(scroll_content)
+        running_layout.setContentsMargins(4, 4, 4, 4)
+        running_layout.setSpacing(10)
+        scroll_area.setWidget(scroll_content)
+        layout.addWidget(scroll_area)
+
+        running_layout.addWidget(self._build_status_card())
+        running_layout.addWidget(self._build_log_card(), 1)
         return tab
 
     def _build_header_card(self) -> QWidget:
@@ -126,17 +145,22 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(card)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(8)
-        layout.addWidget(TitleLabel("第七史诗神秘商店助手"))
-        layout.addWidget(SubtitleLabel("PySide6 + QFluentWidgets 统一界面，支持鼠标模式与 ADB 模式一键切换"))
+        title = TitleLabel("第七史诗神秘商店助手")
+        subtitle = SubtitleLabel("PySide6 + QFluentWidgets 统一界面，支持鼠标模式与 ADB 模式一键切换")
+        title.setWordWrap(True)
+        subtitle.setWordWrap(True)
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
         return card
 
     def _build_general_card(self) -> QWidget:
         card = self._create_card("基础设置", "启动前只保留通用停止条件与控制按钮，模式专属参数放到下方选项页。")
         form = QFormLayout()
-        form.setSpacing(12)
+        self._configure_form_layout(form)
         card.layout().addLayout(form)
 
         self.mode_combo = ComboBox()
+        self.mode_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.mode_combo.addItems(["鼠标模式", "ADB 模式"])
         self.mode_combo.currentIndexChanged.connect(self.update_mode_ui)
         form.addRow("运行模式", self.mode_combo)
@@ -145,6 +169,7 @@ class MainWindow(QMainWindow):
         form.addRow("天空石预算", self.budget_spin)
 
         self.stop_key_input = LineEdit()
+        self.stop_key_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.stop_key_input.setText(DEFAULT_STOP_KEY)
         form.addRow("停止热键", self.stop_key_input)
 
@@ -175,8 +200,11 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
 
         form = QFormLayout()
+        self._configure_form_layout(form)
         self.window_combo = ComboBox()
+        self.window_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.window_title_input = LineEdit()
+        self.window_title_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.window_combo.currentTextChanged.connect(self.window_title_input.setText)
         self.window_refresh_button = PushButton("刷新窗口列表")
         self.window_refresh_button.clicked.connect(self.refresh_windows)
@@ -202,7 +230,9 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
 
         form = QFormLayout()
+        self._configure_form_layout(form)
         self.device_combo = ComboBox()
+        self.device_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.refresh_devices_button = PushButton("刷新设备")
         self.refresh_devices_button.clicked.connect(self.refresh_devices)
         device_row = QHBoxLayout()
@@ -211,6 +241,7 @@ class MainWindow(QMainWindow):
         form.addRow("ADB 设备", self._wrap_layout(device_row))
 
         self.manual_address_input = LineEdit()
+        self.manual_address_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.manual_address_input.setPlaceholderText("例如 localhost:5555")
         self.connect_device_button = PushButton("连接地址")
         self.connect_device_button.clicked.connect(self.connect_manual_device)
@@ -240,14 +271,15 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_items_card(self) -> QWidget:
-        card = self._create_card("购买物品", "勾选要购买的物品；目标数量为 0 表示不设上限。卡片按两列排列以缩短窗口高度。")
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(14)
-        card.layout().addLayout(grid)
+        card = self._create_card("购买物品", "勾选要购买的物品；目标数量为 0 表示不设上限。卡片会按窗口宽度自动排列。")
+        self.item_grid = QGridLayout()
+        self.item_grid.setHorizontalSpacing(12)
+        self.item_grid.setVerticalSpacing(14)
+        card.layout().addLayout(self.item_grid)
 
-        for row, item in enumerate(ITEM_DEFINITIONS):
+        for item in ITEM_DEFINITIONS:
             item_card = CardWidget()
+            item_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             item_layout = QHBoxLayout(item_card)
             item_layout.setContentsMargins(12, 12, 12, 12)
             item_layout.setSpacing(12)
@@ -264,19 +296,24 @@ class MainWindow(QMainWindow):
             item_layout.addWidget(icon_label)
 
             text_container = QVBoxLayout()
-            text_container.addWidget(SubtitleLabel(item.display_name))
-            text_container.addWidget(BodyLabel(f"{item.english_name} | 价格：{item.price:,} 金币"))
+            display_name = SubtitleLabel(item.display_name)
+            price_label = BodyLabel(f"{item.english_name} | 价格：{item.price:,} 金币")
+            display_name.setWordWrap(True)
+            price_label.setWordWrap(True)
+            text_container.addWidget(display_name)
+            text_container.addWidget(price_label)
             item_layout.addLayout(text_container, 1)
 
             target_spin = self._create_int_spin(0, 99999999, special_text="不限")
             item_layout.addWidget(BodyLabel("目标数量"))
             item_layout.addWidget(target_spin)
 
-            grid.addWidget(item_card, row // 2, row % 2)
+            self.item_cards.append(item_card)
             self.item_controls[item.key] = {
                 "checkbox": enabled_checkbox,
                 "target": target_spin,
             }
+        self._relayout_item_cards(2)
         return card
 
     def _build_status_card(self) -> QWidget:
@@ -300,8 +337,12 @@ class MainWindow(QMainWindow):
             grid.addWidget(value_label, row, 1)
             self.status_labels[key] = value_label
 
-        self.item_count_container = QVBoxLayout()
-        card.layout().addLayout(self.item_count_container)
+        item_count_title = SubtitleLabel("获得统计")
+        card.layout().addWidget(item_count_title)
+        self.item_count_grid = QGridLayout()
+        self.item_count_grid.setHorizontalSpacing(12)
+        self.item_count_grid.setVerticalSpacing(12)
+        card.layout().addLayout(self.item_count_grid)
         self._refresh_item_count_labels({})
         return card
 
@@ -325,7 +366,7 @@ class MainWindow(QMainWindow):
         spin.setAccelerated(True)
         spin.setKeyboardTracking(False)
         spin.setButtonSymbols(QAbstractSpinBox.UpDownArrows)
-        spin.setMinimumWidth(150)
+        spin.setMinimumWidth(120)
         if special_text:
             # specialValueText 会在最小值时显示“无限/不限”，底层数值仍为 0，便于保存配置和停止条件判断。
             spin.setSpecialValueText(special_text)
@@ -344,24 +385,78 @@ class MainWindow(QMainWindow):
         spin.setAccelerated(True)
         spin.setKeyboardTracking(False)
         spin.setButtonSymbols(QAbstractSpinBox.UpDownArrows)
-        spin.setMinimumWidth(150)
+        spin.setMinimumWidth(120)
         if suffix:
             spin.setSuffix(suffix)
         return spin
 
     def _create_card(self, title: str, description: str) -> CardWidget:
         card = CardWidget()
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
-        layout.addWidget(SubtitleLabel(title))
-        layout.addWidget(BodyLabel(description))
+        title_label = SubtitleLabel(title)
+        description_label = BodyLabel(description)
+        title_label.setWordWrap(True)
+        description_label.setWordWrap(True)
+        layout.addWidget(title_label)
+        layout.addWidget(description_label)
         return card
 
     def _wrap_layout(self, layout: QHBoxLayout) -> QWidget:
         wrapper = QWidget()
+        wrapper.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout.setContentsMargins(0, 0, 0, 0)
         wrapper.setLayout(layout)
         return wrapper
+
+    def _configure_form_layout(self, form: QFormLayout) -> None:
+        form.setSpacing(12)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+
+    def _item_grid_column_count(self) -> int:
+        width = self.centralWidget().width() if self.centralWidget() else self.width()
+        if width >= 1180:
+            return 3
+        if width >= 820:
+            return 2
+        return 1
+
+    def _item_count_column_count(self) -> int:
+        return 3 if self.width() >= 760 else 1
+
+    def _relayout_item_cards(self, columns: int | None = None) -> None:
+        if self.item_grid is None:
+            return
+        columns = columns or self._item_grid_column_count()
+        if columns == self.item_grid_columns and self.item_grid.count() == len(self.item_cards):
+            return
+
+        while self.item_grid.count():
+            self.item_grid.takeAt(0)
+
+        for index, item_card in enumerate(self.item_cards):
+            self.item_grid.addWidget(item_card, index // columns, index % columns)
+
+        for column in range(3):
+            self.item_grid.setColumnStretch(column, 1 if column < columns else 0)
+        self.item_grid_columns = columns
+
+    def _clear_layout(self, layout: QGridLayout | QVBoxLayout | QHBoxLayout) -> None:
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+            elif child.layout():
+                self._clear_layout(child.layout())
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._relayout_item_cards()
+        if self.item_count_grid is not None and self._item_count_column_count() != self.item_count_columns:
+            self._refresh_item_count_labels(self.latest_item_counts)
 
     def update_mode_ui(self) -> None:
         index = self.mode_combo.currentIndex()
@@ -501,12 +596,54 @@ class MainWindow(QMainWindow):
         self._refresh_item_count_labels(statistics.item_counts)
 
     def _refresh_item_count_labels(self, item_counts: dict[str, int]) -> None:
-        while self.item_count_container.count():
-            child = self.item_count_container.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-        for item in ITEM_DEFINITIONS:
-            self.item_count_container.addWidget(BodyLabel(f"{item.display_name}：{item_counts.get(item.key, 0)}"))
+        if self.item_count_grid is None:
+            return
+        self.latest_item_counts = dict(item_counts)
+        self._clear_layout(self.item_count_grid)
+
+        columns = self._item_count_column_count()
+        self.item_count_columns = columns
+        for index, item in enumerate(ITEM_DEFINITIONS):
+            panel = QWidget()
+            panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            panel.setStyleSheet(
+                """
+                QWidget {
+                    background-color: #1b1b1b;
+                    border: 1px solid #3a3a3a;
+                    border-radius: 8px;
+                }
+                QLabel {
+                    background-color: transparent;
+                    border: 0;
+                }
+                """
+            )
+
+            layout = QHBoxLayout(panel)
+            layout.setContentsMargins(14, 12, 14, 12)
+            layout.setSpacing(12)
+
+            icon_label = QLabel()
+            icon_label.setFixedSize(48, 48)
+            icon_label.setAlignment(Qt.AlignCenter)
+            icon_path = Path(ASSETS_DIR) / item.file_name
+            pixmap = QPixmap(str(icon_path))
+            if not pixmap.isNull():
+                icon_label.setPixmap(pixmap.scaled(42, 42, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            layout.addWidget(icon_label)
+
+            text_layout = QVBoxLayout()
+            text_layout.setSpacing(2)
+            name_label = QLabel(item.display_name)
+            name_label.setStyleSheet("color: #d8d8d8; font-size: 13px;")
+            count_label = QLabel(str(item_counts.get(item.key, 0)))
+            count_label.setStyleSheet("color: #ffffff; font-size: 24px; font-weight: 700;")
+            text_layout.addWidget(name_label)
+            text_layout.addWidget(count_label)
+            layout.addLayout(text_layout, 1)
+
+            self.item_count_grid.addWidget(panel, index // columns, index % columns)
 
     def set_running_state(self, running: bool) -> None:
         self.start_button.setEnabled(not running)
