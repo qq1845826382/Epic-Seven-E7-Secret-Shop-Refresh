@@ -78,7 +78,7 @@ class MainWindow(QMainWindow):
         self.update_mode_ui()
 
         if self.from_legacy_entry:
-            self.logger.info("当前从旧 ADB 入口进入，已自动切换到统一界面的 ADB 模式。")
+            self.logger.info("已自动切换到 ADB 模式。")
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -146,15 +146,12 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(8)
         title = TitleLabel("第七史诗神秘商店助手")
-        subtitle = SubtitleLabel("PySide6 + QFluentWidgets 统一界面，支持鼠标模式与 ADB 模式一键切换")
         title.setWordWrap(True)
-        subtitle.setWordWrap(True)
         layout.addWidget(title)
-        layout.addWidget(subtitle)
         return card
 
     def _build_general_card(self) -> QWidget:
-        card = self._create_card("基础设置", "启动前只保留通用停止条件与控制按钮，模式专属参数放到下方选项页。")
+        card = self._create_card("基础设置")
         form = QFormLayout()
         self._configure_form_layout(form)
         card.layout().addLayout(form)
@@ -187,7 +184,7 @@ class MainWindow(QMainWindow):
         return card
 
     def _build_mode_card(self) -> QWidget:
-        card = self._create_card("模式设置", "仅显示当前运行方式需要的参数，避免鼠标模式与 ADB 模式设置混在一起。")
+        card = self._create_card("模式设置")
         self.mode_stack = QStackedWidget()
         self.mode_stack.addWidget(self._build_mouse_page())
         self.mode_stack.addWidget(self._build_adb_page())
@@ -271,7 +268,7 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_items_card(self) -> QWidget:
-        card = self._create_card("购买物品", "勾选要购买的物品；目标数量为 0 表示不设上限。卡片会按窗口宽度自动排列。")
+        card = self._create_card("购买物品", "目标数量为 0 表示不设上限。")
         self.item_grid = QGridLayout()
         self.item_grid.setHorizontalSpacing(12)
         self.item_grid.setVerticalSpacing(14)
@@ -297,7 +294,7 @@ class MainWindow(QMainWindow):
 
             text_container = QVBoxLayout()
             display_name = SubtitleLabel(item.display_name)
-            price_label = BodyLabel(f"{item.english_name} | 价格：{item.price:,} 金币")
+            price_label = BodyLabel(f"价格：{item.price:,} 金币")
             display_name.setWordWrap(True)
             price_label.setWordWrap(True)
             text_container.addWidget(display_name)
@@ -317,7 +314,7 @@ class MainWindow(QMainWindow):
         return card
 
     def _build_status_card(self) -> QWidget:
-        card = self._create_card("统一运行统计", "鼠标模式与 ADB 模式共用同一组刷新指标，便于对比最终结果。")
+        card = self._create_card("运行统计")
         grid = QGridLayout()
         grid.setHorizontalSpacing(20)
         grid.setVerticalSpacing(10)
@@ -347,7 +344,7 @@ class MainWindow(QMainWindow):
         return card
 
     def _build_log_card(self) -> QWidget:
-        card = self._create_card("运行日志", "实时显示流程日志、进度和结束结果。")
+        card = self._create_card("运行日志")
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setMinimumHeight(260)
@@ -390,18 +387,19 @@ class MainWindow(QMainWindow):
             spin.setSuffix(suffix)
         return spin
 
-    def _create_card(self, title: str, description: str) -> CardWidget:
+    def _create_card(self, title: str, description: str = "") -> CardWidget:
         card = CardWidget()
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
         title_label = SubtitleLabel(title)
-        description_label = BodyLabel(description)
         title_label.setWordWrap(True)
-        description_label.setWordWrap(True)
         layout.addWidget(title_label)
-        layout.addWidget(description_label)
+        if description:
+            description_label = BodyLabel(description)
+            description_label.setWordWrap(True)
+            layout.addWidget(description_label)
         return card
 
     def _wrap_layout(self, layout: QHBoxLayout) -> QWidget:
