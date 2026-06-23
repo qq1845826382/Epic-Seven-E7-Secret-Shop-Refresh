@@ -1,179 +1,93 @@
-# Epic Seven Secret Shop Refresh with GUI
-## Showcase
-![](https://github.com/sya1999/Epic-Seven-Secret-Shop-Refresh/blob/main/assets/E7.gif)
-## Getting Started
-### MOUSE vs ADB
-There are two different ways to run auto shop refresh, either through **controlling host mouse** or **send in debug command** to emulator
+# 第七史诗神秘商店助手
 
-<br>
+基于 `PySide6 + QFluentWidgets` 的统一中文桌面应用，用于自动刷新《第七史诗》神秘商店。
 
-### Special Note (MUST READ!!!)
-1. If you are using the program with the **new PC Client**, then you need to **run the shop refresh program with administrator privileges**
+## 功能概览
 
-(This is not necessary when you are using an emulator.)
+- 单窗口整合 `鼠标模式` 与 `ADB 模式`
+- 全中文界面与提示
+- 统一的预算停止、目标数量停止、实时日志、结果统计
+- ADB 设备选择、地址连接、随机偏移、调试模式、配置保存
+- 统一写入 `ShopRefreshHistory/UnifiedHistory.csv`
 
-<br>
+## 运行要求
 
-2. If the **button is grey-out**, that means you typed or selected the wrong window title, the name has to be exact down to the spacing
+- Python `3.11+`
+- Windows
+- 鼠标模式需要模拟器窗口可见
+- ADB 模式需要模拟器开启 ADB，并保持游戏分辨率为 `1920 x 1080`
 
-<br>
+## 安装依赖
 
-3. Make sure the monitor is **TURNED ON AT ALL TIMES**, the program relies on the display to be active to take screenshot
-
-(By default, the mouse movement should keep the screen on, just don't power off the display maunally)
-
-<br>
-
-4. Make sure that the **program recognize the covenant/mystic bookmark before letting it run unsupervised**
-
-(you can manual refresh faster, so refresh till a bookmark show up, then start the program to see if it purchased)
-
-<br>
-
-5. Use the **friendship bookmark option** to find out what mouse speed suit your pc. Feel free to increase mouse speed if it's running too fast.
-
-(If you have a good PC, You can set the **mouse speed to 0 and Screenshot speed to 0.3**) 
-
-### Refresh Options
-**Mouse**
-
-Pros:
-
-- Compatible with all emulator
-
-- Fastest way to refresh shop 
-
-Cons:
-
-- Can't use mouse while the application is running
-
-- Emulator needs to stay on screen
-
-- Google Play Beta user might need to change desktop display setting to 1920 x 1080
-
-[Click Here to jump to Mouse section](https://github.com/Solunium/Epic-Seven-E7-Secret-Shop-Refresh/tree/main?tab=readme-ov-file#quick-start-mouse)
-
-<br>
-
-**ADB**
-
-Pros:
-
-- Mouse is free to do whatever
-
-- you can minimize the emulator window 
-
-Cons:
-
-- Requires emulator to have ADB 
-
-- need to set ingame resolution to be 1920 x 1080
-
-[Click Here to jump to ADB section](https://github.com/Solunium/Epic-Seven-E7-Secret-Shop-Refresh/tree/main?tab=readme-ov-file#quick-start-android-debug-bridge)
-
-<br>
-
-### Quick Start (Mouse):
-
-<br>
-
-**Step 1.** Download the [latest release](https://github.com/sya1999/Epic-Seven-Secret-Shop-Refresh/releases) make sure to download (**E7 Secret Shop Refresh.zip**)
-
-**Step 2.** Extract the zip file to any directory
-
-**Step 3.** Launch Epic Seven on your emulator, make sure to close dispatch mission and news
-
-**Step 4.** Launch **E7SecretShopRefresh** in the folder that you just extracted
-
-**Step 5.** Select your emulator from the drop down box	
-  - If you can't find it, you need to type in the window name of your emulator and press enter
-  - you can see the name of you emulator by hovering over the taskbar icon of your emulator
-
-**Step 6.** (Optional) you can change the setting, refer to [Setting section](https://github.com/sya1999/Epic-Seven-Secret-Shop-Refresh/tree/main?tab=readme-ov-file#settings)
-
-**Step 6.5:** **EXTRA STEP FOR GOOGLE PLAY BETA USER**
-
-If you are using **GOOGLE PLAY BETA**, make sure **Desktop display resolution setting is 1920 x 1080**, so that it resize properly  
-
-**Step 7.** Press the "start refresh" button
-
-**PRESS ESC KEY TO STOP THE PROGRAM**
-
-**Always make sure that the program recognize the covenant/mystic bookmark before letting it run unsupervised**
-
-**If you encounter a problem, feel free to open a issue on github!**
-	
-You can check your refreshing history in the folder called **ShopRefreshHistory**
-
-<br>
-
-### Quick Start (Android Debug Bridge):
-
-<br>
-
-**Step 1.** Download the [latest release](https://github.com/sya1999/Epic-Seven-Secret-Shop-Refresh/releases) make sure to download (**E7 Secret Shop Refresh.zip**)
-
-**Step 2.** Extract the zip file to any directory
-
-**Step 3.** Launch Epic Seven on your emulator, make sure to close dispatch mission and news
-
-**step 4.** Turn on **ADB** (Android Debug bridge) on your emulator
-
-Google play beta user needs to download **Google Play Games on PC Developer Emulator**, then allow debug when prompted in home screen. 
-Unfortunately, **Epic Seven needs to be redownloaded**. Go with the mouse option, if you don't want to go through the trouble
-
-**step 5.** Change emulator's resolution to **1920 x 1080**
-
-**step 6.** Launch **E7ADBShopRefresh** in the folder that you just extracted
-
-**step 7.** Follow the instruction show in the command line, and press enter to start
-
-**PRESS ESC KEY TO STOP THE PROGRAM**
-
-**Always make sure that the program recognize the covenant/mystic bookmark before letting it run unsupervised**
-
-**One way to test the program is to manual refresh till covenant/mystic bookmark show up, then run the program to see if it brought**
-
-You can check your refreshing history in the folder called **ShopRefreshHistory**
-
-<br>
-
-### Compile it yourself:
-**Step 1.** Install python version 3.11.9
-
-**Step 2.** Git clone this repository to your directory
-
-If you don't want to deal with git, then download the code as zip file using the green "code" button on top
-
-**Step 3.** (Optional) Setup and activate a virtual environment with venv or conda
-
-**Step 4.** Install the dependencies
-```
+```bash
 pip install -r requirements.txt
 ```
-**Step 5.** Open and run E7SecretShopRefresh.py or main.ipynb, go to the main function or app config class to make edit
 
-**Step 6.** (Optional) Use pyinstaller to create an executable
+## 启动方式
+
+### 统一 GUI 主入口
+
+```bash
+python E7SecretShopRefresh.py
 ```
-python -m PyInstaller -F --noconsole -i assets/icon.ico E7SecretShopRefresh.py
+
+- 默认进入 `鼠标模式`
+- 可在窗口内切换到 `ADB 模式`
+
+### 兼容旧 ADB 入口
+
+```bash
+python E7ADBShopRefresh.py
 ```
+
+- 仍然打开同一个统一 GUI
+- 默认直接切换到 `ADB 模式`
+
+## 使用说明
+
+### 鼠标模式
+
+1. 启动游戏并打开神秘商店所在模拟器
+2. 打开程序后选择 `鼠标模式`
+3. 选择或输入模拟器窗口标题
+4. 勾选要购买的物品，并按需填写目标数量
+5. 设置预算或目标数量
+6. 点击 `开始刷新`
+7. 按界面中的停止按钮或热键结束
+
+### ADB 模式
+
+1. 在模拟器中开启 ADB
+2. 确认游戏分辨率为 `1920 x 1080`
+3. 打开程序并切换到 `ADB 模式`
+4. 刷新设备列表，或手动输入地址连接
+5. 选择要购买的物品，并设置预算或目标数量
+6. 按需开启 `随机点击偏移` 或 `ADB 调试模式`
+7. 点击 `开始刷新`
+
+## 配置与数据
+
+- ADB 配置文件：`ADBconfig.ini`
+- 应用界面配置：`app_config.ini`
+- 运行历史：`ShopRefreshHistory/UnifiedHistory.csv`
+
+## 打包
+
+推荐打包统一 GUI 入口：
+
+```bash
+python -m PyInstaller -F --noconsole -i assets/gui_icon.ico E7SecretShopRefresh.py
 ```
-python -m PyInstaller -F -i adb-assets/icon.ico E7ADBShopRefresh.py
+
+如果仍需保留旧 ADB 文件名入口，也可以单独打包：
+
+```bash
+python -m PyInstaller -F --noconsole -i assets/gui_icon.ico E7ADBShopRefresh.py
 ```
 
-<br>
+## 注意事项
 
-## Settings
-It can be helpful to select the friendship bookmark to check if the program is detecting items correctly	
-
-Increase mouse speed, if the mouse is moving faster than ui animation
-
-Increase screenshot speed, if you have a longer loading time after each purchase/refresh action
-
-You can stay with the default speed setting in most cases
-
-By not setting a skystone budget, the program will run till ESC is pressed
-
-You can toggle on and off hint which is a live counter of the items purchased
-
-by turning off auto placement, you can move the emulator to another monitor (After turning this off, make sure the entire emulator window stays on-screen)
+- 鼠标模式运行时不要遮挡模拟器窗口
+- ADB 模式仅首版支持 `1920 x 1080`
+- 第一次使用建议先用小预算或友情书签验证识别是否正确
+- `PySide6-Fluent-Widgets` 不要与其他 Qt 绑定版本的 fluent 包混装
