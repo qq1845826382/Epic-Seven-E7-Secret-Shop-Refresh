@@ -17,10 +17,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QAbstractSpinBox,
     QPlainTextEdit,
     QScrollArea,
     QSpinBox,
     QStackedWidget,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -54,7 +56,8 @@ class MainWindow(QMainWindow):
             self.logger.addHandler(self.log_handler)
 
         self.setWindowTitle("第七史诗神秘商店助手")
-        self.resize(1400, 920)
+        # 默认窗口从原来的大尺寸收窄，避免启动后占用过多桌面空间；内容通过选项卡分组承载。
+        self.resize(1040, 760)
         if WINDOW_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(WINDOW_ICON_PATH)))
 
@@ -72,26 +75,51 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         root = QWidget(self)
         root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(18, 18, 18, 18)
-        root_layout.setSpacing(16)
+        root_layout.setContentsMargins(14, 14, 14, 14)
+        root_layout.setSpacing(10)
         self.setCentralWidget(root)
+
+        root_layout.addWidget(self._build_header_card())
+
+        # QTabWidget 将“运行前配置”和“运行中观察”拆开：
+        # 1. 配置页只保留启动前需要处理的内容，减少首屏纵向堆叠。
+        # 2. 运行页合并鼠标/ADB 的共同统计指标，切换模式后依然只看同一组刷新数据。
+        self.main_tabs = QTabWidget()
+        self.main_tabs.setDocumentMode(True)
+        self.main_tabs.addTab(self._build_setup_tab(), "运行前")
+        self.main_tabs.addTab(self._build_running_tab(), "运行中")
+        root_layout.addWidget(self.main_tabs, 1)
+
+    def _build_setup_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setSpacing(10)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
         scroll_content = QWidget()
-        self.content_layout = QVBoxLayout(scroll_content)
-        self.content_layout.setContentsMargins(8, 8, 8, 8)
-        self.content_layout.setSpacing(16)
+        self.setup_layout = QVBoxLayout(scroll_content)
+        self.setup_layout.setContentsMargins(4, 4, 4, 4)
+        self.setup_layout.setSpacing(10)
         scroll_area.setWidget(scroll_content)
-        root_layout.addWidget(scroll_area)
+        layout.addWidget(scroll_area)
 
-        self.content_layout.addWidget(self._build_header_card())
-        self.content_layout.addWidget(self._build_general_card())
-        self.content_layout.addWidget(self._build_mode_card())
-        self.content_layout.addWidget(self._build_items_card())
-        self.content_layout.addWidget(self._build_status_card())
-        self.content_layout.addWidget(self._build_log_card())
-        self.content_layout.addStretch(1)
+        self.setup_layout.addWidget(self._build_general_card())
+        self.setup_layout.addWidget(self._build_mode_card())
+        self.setup_layout.addWidget(self._build_items_card())
+        self.setup_layout.addStretch(1)
+        return tab
+
+    def _build_running_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setSpacing(10)
+        layout.addWidget(self._build_status_card())
+        layout.addWidget(self._build_log_card(), 1)
+        return tab
 
     def _build_header_card(self) -> QWidget:
         card = CardWidget()
@@ -103,7 +131,7 @@ class MainWindow(QMainWindow):
         return card
 
     def _build_general_card(self) -> QWidget:
-        card = self._create_card("基础设置", "统一管理运行模式、预算、速度与启动控制。")
+        card = self._create_card("基础设置", "启动前只保留通用停止条件与控制按钮，模式专属参数放到下方选项页。")
         form = QFormLayout()
         form.setSpacing(12)
         card.layout().addLayout(form)
@@ -113,32 +141,13 @@ class MainWindow(QMainWindow):
         self.mode_combo.currentIndexChanged.connect(self.update_mode_ui)
         form.addRow("运行模式", self.mode_combo)
 
-        self.budget_spin = QSpinBox()
-        self.budget_spin.setRange(0, 100000000)
-        self.budget_spin.setSpecialValueText("不限")
+        self.budget_spin = self._create_int_spin(0, 100000000, special_text="不限", suffix=" 天空石")
         form.addRow("天空石预算", self.budget_spin)
 
         self.stop_key_input = LineEdit()
         self.stop_key_input.setText(DEFAULT_STOP_KEY)
         form.addRow("停止热键", self.stop_key_input)
 
-        self.mouse_sleep_spin = QDoubleSpinBox()
-        self.mouse_sleep_spin.setRange(0.01, 10.0)
-        self.mouse_sleep_spin.setSingleStep(0.05)
-        self.mouse_sleep_spin.setValue(DEFAULT_MOUSE_SLEEP)
-        form.addRow("鼠标速度（秒）", self.mouse_sleep_spin)
-
-        self.screenshot_sleep_spin = QDoubleSpinBox()
-        self.screenshot_sleep_spin.setRange(0.01, 10.0)
-        self.screenshot_sleep_spin.setSingleStep(0.05)
-        self.screenshot_sleep_spin.setValue(DEFAULT_SCREENSHOT_SLEEP)
-        form.addRow("截图等待（秒）", self.screenshot_sleep_spin)
-
-        self.adb_tap_sleep_spin = QDoubleSpinBox()
-        self.adb_tap_sleep_spin.setRange(0.01, 10.0)
-        self.adb_tap_sleep_spin.setSingleStep(0.05)
-        self.adb_tap_sleep_spin.setValue(0.3)
-        form.addRow("ADB 点击等待（秒）", self.adb_tap_sleep_spin)
 
         buttons = QHBoxLayout()
         self.start_button = PrimaryPushButton("开始刷新")
@@ -153,7 +162,7 @@ class MainWindow(QMainWindow):
         return card
 
     def _build_mode_card(self) -> QWidget:
-        card = self._create_card("模式设置", "在同一个窗口中切换鼠标模式和 ADB 模式。")
+        card = self._create_card("模式设置", "仅显示当前运行方式需要的参数，避免鼠标模式与 ADB 模式设置混在一起。")
         self.mode_stack = QStackedWidget()
         self.mode_stack.addWidget(self._build_mouse_page())
         self.mode_stack.addWidget(self._build_adb_page())
@@ -173,6 +182,8 @@ class MainWindow(QMainWindow):
         self.window_refresh_button.clicked.connect(self.refresh_windows)
         self.auto_move_checkbox = QCheckBox("自动将模拟器移动到左上角")
         self.auto_move_checkbox.setChecked(True)
+        self.mouse_sleep_spin = self._create_double_spin(0.01, 10.0, DEFAULT_MOUSE_SLEEP, step=0.05, suffix=" 秒")
+        self.screenshot_sleep_spin = self._create_double_spin(0.01, 10.0, DEFAULT_SCREENSHOT_SLEEP, step=0.05, suffix=" 秒")
 
         row = QHBoxLayout()
         row.addWidget(self.window_combo)
@@ -180,6 +191,8 @@ class MainWindow(QMainWindow):
         form.addRow("检测到的窗口", self._wrap_layout(row))
         form.addRow("窗口标题（可手输）", self.window_title_input)
         form.addRow("窗口定位", self.auto_move_checkbox)
+        form.addRow("鼠标速度", self.mouse_sleep_spin)
+        form.addRow("截图等待", self.screenshot_sleep_spin)
         layout.addLayout(form)
         return page
 
@@ -206,8 +219,10 @@ class MainWindow(QMainWindow):
         address_row.addWidget(self.connect_device_button)
         form.addRow("手动连接", self._wrap_layout(address_row))
 
+        self.adb_tap_sleep_spin = self._create_double_spin(0.01, 10.0, 0.3, step=0.05, suffix=" 秒")
         self.random_offset_checkbox = QCheckBox("启用随机点击偏移")
         self.adb_debug_checkbox = QCheckBox("启用 ADB 调试模式")
+        form.addRow("点击等待", self.adb_tap_sleep_spin)
         form.addRow("随机偏移", self.random_offset_checkbox)
         form.addRow("调试模式", self.adb_debug_checkbox)
 
@@ -225,7 +240,7 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_items_card(self) -> QWidget:
-        card = self._create_card("购买物品", "勾选要购买的物品；目标数量为 0 表示不设上限。")
+        card = self._create_card("购买物品", "勾选要购买的物品；目标数量为 0 表示不设上限。卡片按两列排列以缩短窗口高度。")
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(14)
@@ -253,13 +268,11 @@ class MainWindow(QMainWindow):
             text_container.addWidget(BodyLabel(f"{item.english_name} | 价格：{item.price:,} 金币"))
             item_layout.addLayout(text_container, 1)
 
-            target_spin = QSpinBox()
-            target_spin.setRange(0, 99999999)
-            target_spin.setSpecialValueText("不限")
+            target_spin = self._create_int_spin(0, 99999999, special_text="不限")
             item_layout.addWidget(BodyLabel("目标数量"))
             item_layout.addWidget(target_spin)
 
-            grid.addWidget(item_card, row, 0)
+            grid.addWidget(item_card, row // 2, row % 2)
             self.item_controls[item.key] = {
                 "checkbox": enabled_checkbox,
                 "target": target_spin,
@@ -267,7 +280,7 @@ class MainWindow(QMainWindow):
         return card
 
     def _build_status_card(self) -> QWidget:
-        card = self._create_card("运行状态", "实时展示当前模式、刷新次数、消耗统计与结束原因。")
+        card = self._create_card("统一运行统计", "鼠标模式与 ADB 模式共用同一组刷新指标，便于对比最终结果。")
         grid = QGridLayout()
         grid.setHorizontalSpacing(20)
         grid.setVerticalSpacing(10)
@@ -302,6 +315,39 @@ class MainWindow(QMainWindow):
         card.layout().addWidget(self.log_output)
         card.layout().addWidget(clear_button, alignment=Qt.AlignRight)
         return card
+
+    def _create_int_spin(self, minimum: int, maximum: int, special_text: str = "", suffix: str = "") -> QSpinBox:
+        # QSpinBox 是整数输入框。这里集中设置按钮、步进和宽度，避免不同位置的数值框表现不一致。
+        # setButtonSymbols(UpDownArrows) 会强制显示上下箭头，修复部分主题下增减按钮不明显或无法点击的问题。
+        spin = QSpinBox()
+        spin.setRange(minimum, maximum)
+        spin.setSingleStep(1)
+        spin.setAccelerated(True)
+        spin.setKeyboardTracking(False)
+        spin.setButtonSymbols(QAbstractSpinBox.UpDownArrows)
+        spin.setMinimumWidth(150)
+        if special_text:
+            # specialValueText 会在最小值时显示“无限/不限”，底层数值仍为 0，便于保存配置和停止条件判断。
+            spin.setSpecialValueText(special_text)
+        if suffix:
+            spin.setSuffix(suffix)
+        return spin
+
+    def _create_double_spin(self, minimum: float, maximum: float, value: float, step: float, suffix: str = "") -> QDoubleSpinBox:
+        # QDoubleSpinBox 是小数输入框，用于等待时间等秒级参数；统一保留两位小数并禁用实时键盘追踪。
+        # 禁用实时追踪可避免用户输入中间态（例如只输入小数点）时立即触发校验导致数值跳回。
+        spin = QDoubleSpinBox()
+        spin.setRange(minimum, maximum)
+        spin.setDecimals(2)
+        spin.setSingleStep(step)
+        spin.setValue(value)
+        spin.setAccelerated(True)
+        spin.setKeyboardTracking(False)
+        spin.setButtonSymbols(QAbstractSpinBox.UpDownArrows)
+        spin.setMinimumWidth(150)
+        if suffix:
+            spin.setSuffix(suffix)
+        return spin
 
     def _create_card(self, title: str, description: str) -> CardWidget:
         card = CardWidget()
@@ -409,7 +455,8 @@ class MainWindow(QMainWindow):
 
         self.save_app_config()
         self.set_running_state(True)
-        self.append_log("准备开始新一轮刷新。")
+        self.main_tabs.setCurrentIndex(1)
+        self.append_log("准备开始新一轮刷新，已切换到运行中统计页。")
 
         self.worker_thread = QThread(self)
         self.worker = RefreshWorker(config=config, selections=selections, logger=self.logger)
@@ -464,6 +511,7 @@ class MainWindow(QMainWindow):
     def set_running_state(self, running: bool) -> None:
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
+        self.mode_combo.setEnabled(not running)
 
     def append_log(self, message: str) -> None:
         self.log_output.appendPlainText(message)
