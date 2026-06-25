@@ -8,12 +8,16 @@ import cv2
 import numpy as np
 
 
+# 价格 OCR 使用原始 E7AutoShop 方案中的 1920x1080 画布坐标。
+# 鼠标模式会把窗口截图缩放到这套坐标，ADB 模式则已经强制校验为 1920x1080。
 BASE_WIDTH = 1920
 BASE_HEIGHT = 1080
 
 
 @dataclass(frozen=True)
 class PriceSlot:
+    """一个商店商品行的价格裁剪区，以及该行命中后应点击的购买区域。"""
+
     key: str
     phase: str
     crop: tuple[int, int, int, int]
@@ -23,10 +27,14 @@ class PriceSlot:
 
 @dataclass(frozen=True)
 class RecognizedPrice:
+    """一次 OCR 扫描后识别到的价格及其所在商品行。"""
+
     slot: PriceSlot
     price: str
 
 
+# 第一屏只扫描 item_1~item_4，滑动后只扫描 item_5~item_6。
+# 这样可以避免滑动前后不同位置的价格框互相误判。
 PRICE_SLOTS = [
     PriceSlot("item_1", "top", (1660, 140, 1860, 190), (1600, 1850), (222, 270)),
     PriceSlot("item_2", "top", (1660, 350, 1860, 410), (1600, 1850), (440, 485)),
@@ -39,6 +47,7 @@ PRICE_SLOTS = [
 
 class PriceOCRService:
     def __init__(self) -> None:
+        # RapidOCR 模型加载较重，整个进程复用一个实例，避免每次截图重复初始化。
         self._engine: Any | None = None
 
     def scan_prices(
@@ -48,6 +57,8 @@ class PriceOCRService:
         scale_x: float = 1.0,
         scale_y: float = 1.0,
     ) -> list[RecognizedPrice]:
+        """扫描当前页面阶段的所有价格框，返回非空 OCR 结果。"""
+
         recognized: list[RecognizedPrice] = []
         for slot in PRICE_SLOTS:
             if slot.phase != phase:
@@ -59,6 +70,8 @@ class PriceOCRService:
         return recognized
 
     def ensure_ready(self) -> None:
+        """提前初始化 OCR 引擎，让依赖缺失在正式点击前暴露。"""
+
         self._get_engine()
 
     def recognize_price(self, image: np.ndarray) -> str:
@@ -68,6 +81,7 @@ class PriceOCRService:
 
     @staticmethod
     def clean_price_text(text: str) -> str:
+        # 只保留数字，不做 O->0 等纠错；宁可漏买，也不要因为纠错误买。
         return re.sub(r"\D", "", text)
 
     def _get_engine(self):
@@ -83,6 +97,7 @@ class PriceOCRService:
         return self._engine
 
     def _preprocess(self, image: np.ndarray) -> np.ndarray:
+        # 价格数字区域较小，放大和二值化能提高 OCR 对金币价格的稳定性。
         if image.ndim == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         else:
@@ -111,6 +126,8 @@ class PriceOCRService:
         return max(minimum, min(value, maximum))
 
     def _extract_texts(self, result: Any) -> Iterable[str]:
+        """兼容 RapidOCR 不同版本可能返回的对象、字典、列表结构。"""
+
         if result is None:
             return
         for attr in ("txts", "texts", "rec_texts"):
