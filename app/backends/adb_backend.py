@@ -4,7 +4,6 @@ import random
 import subprocess
 import time
 from io import BytesIO
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -12,12 +11,13 @@ from PIL import Image
 
 from app.backends.base import BaseBackend
 from app.core.constants import (
-    ADB_ASSETS_DIR,
     ADB_EXECUTABLE,
+    ITEM_DEFINITIONS,
     SUPPORTED_ADB_HEIGHT,
     SUPPORTED_ADB_WIDTH,
 )
 from app.services.adb_service import ADBService
+from app.services.price_ocr_service import price_ocr_service
 
 
 class ADBBackend(BaseBackend):
@@ -29,6 +29,10 @@ class ADBBackend(BaseBackend):
         self.screenheight = SUPPORTED_ADB_HEIGHT
         self.x_offset = 75 if self.config.adb_random_offset else 0
         self.y_offset = 25 if self.config.adb_random_offset else 0
+        self.scan_phase = "top"
+        self._price_cache_phase: str | None = None
+        self._price_cache_image = None
+        self._price_cache = []
 
     @property
     def page_settle_delay(self) -> float:
@@ -39,6 +43,8 @@ class ADBBackend(BaseBackend):
         return 1.0
 
     def prepare(self) -> None:
+        price_ocr_service.ensure_ready()
+
         if self.config.adb_manual_address.strip():
             success, message = self.adb_service.connect_device(self.config.adb_manual_address.strip())
             self.logger.info(message or "ADB 连接命令已执行。")
@@ -62,11 +68,10 @@ class ADBBackend(BaseBackend):
         self.logger.info("已连接 ADB 设备：%s", self.device_id)
 
     def load_template(self, file_name: str):
-        path = Path(ADB_ASSETS_DIR) / file_name
-        image = cv2.imread(str(path))
-        if image is None:
-            raise RuntimeError(f"无法读取 ADB 模板图片：{path}")
-        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        for item in ITEM_DEFINITIONS:
+            if item.file_name == file_name:
+                return str(item.price)
+        raise RuntimeError(f"未找到物品价格定义：{file_name}")
 
     def open_shop(self) -> None:
         self._tap(self.screenwidth * 0.0411, self.screenheight * 0.3835, fixed=True)
@@ -75,6 +80,7 @@ class ADBBackend(BaseBackend):
         time.sleep(0.5)
         self._tap(self.screenwidth * 0.0411, self.screenheight * 0.3835, fixed=True)
         time.sleep(0.5)
+        self.scan_phase = "top"
         self.logger.info("已进入神秘商店页面。")
 
     def capture_screen(self):
@@ -86,43 +92,53 @@ class ADBBackend(BaseBackend):
         return screenshot
 
     def find_item_position(self, screen_image, template) -> tuple[float, float] | None:
-        result = cv2.matchTemplate(screen_image, template, cv2.TM_CCOEFF_NORMED)
-        loc = np.where(result >= 0.75)
-        if loc[0].size > 0:
-            x = loc[1][0] + self.screenwidth * 0.4718
-            y = loc[0][0] + self.screenheight * 0.1000
-            return x, y
+        target_price = str(template)
+        for recognized in self._scan_price_slots(screen_image):
+            if recognized.price == target_price:
+                slot = recognized.slot
+                return (
+                    random.randint(*slot.buy_x_range),
+                    random.randint(*slot.buy_y_range),
+                )
         return None
 
     def buy_item(self, position: tuple[float, float]) -> None:
-        self._tap(*position, prompt="请确认红框位于购买按钮范围内。")
+        if self.config.adb_debug:
+            self._show_offset_area(*position, "ADB 调试", "请确认红框位于购买按钮范围内。")
+        self._run_adb(["shell", "input", "tap", str(position[0]), str(position[1])])
+        self._run_adb(["shell", "input", "tap", str(position[0]), str(position[1])])
         time.sleep(self.config.adb_tap_sleep)
-        self._tap(
-            self.screenwidth * 0.5677,
-            self.screenheight * 0.7037,
-            prompt="请确认红框位于购买确认按钮范围内。",
-        )
+        confirm_position = (random.randint(1000, 1275), random.randint(740, 790))
+        if self.config.adb_debug:
+            self._show_offset_area(*confirm_position, "ADB 调试", "请确认红框位于购买确认按钮范围内。")
+        self._run_adb(["shell", "input", "tap", str(confirm_position[0]), str(confirm_position[1])])
+        self._run_adb(["shell", "input", "tap", str(confirm_position[0]), str(confirm_position[1])])
         time.sleep(self.config.adb_tap_sleep)
         time.sleep(1.0)
 
     def scroll_shop(self) -> None:
-        x = self.screenwidth * 0.6250
-        y1 = self.screenheight * 0.7481
-        y2 = self.screenheight * 0.3629
+        x1 = 1050
+        y1 = 500
+        x2 = 1250
+        y2 = 50
         if self.config.adb_debug:
-            self._show_offset_area(x, y1, "起始滑动区域", "请确认红框位于可滑动区域")
-        x_offset, y_offset = self._generate_offset()
+            self._show_offset_area(x1, y1, "起始滑动区域", "请确认红框位于可滑动区域")
+        x1_offset = random.randint(-50, 50)
+        y1_offset = random.randint(-50, 50)
+        x2_offset = random.randint(-50, 50)
+        y2_offset = random.randint(-50, 50)
         self._run_adb(
             [
                 "shell",
                 "input",
                 "swipe",
-                str(x + x_offset),
-                str(y1 + y_offset),
-                str(x + x_offset),
-                str(y2 + y_offset),
+                str(x1 + x1_offset),
+                str(y1 + y1_offset),
+                str(x2 + x2_offset),
+                str(y2 + y2_offset),
             ]
         )
+        self.scan_phase = "bottom"
 
     def refresh_shop(self) -> None:
         self._tap(
@@ -137,6 +153,7 @@ class ADBBackend(BaseBackend):
             prompt="请确认红框位于刷新确认按钮范围内。",
         )
         time.sleep(self.config.adb_tap_sleep)
+        self.scan_phase = "top"
 
     def _tap(self, x: float, y: float, fixed: bool = False, prompt: str = "") -> None:
         x_offset, y_offset = (0, 0) if fixed else self._generate_offset()
@@ -177,6 +194,15 @@ class ADBBackend(BaseBackend):
             stderr = completed.stderr.decode("utf-8", errors="ignore").strip()
             raise RuntimeError(stderr or "ADB 命令执行失败。")
         return completed
+
+    def _scan_price_slots(self, screen_image):
+        if self._price_cache_image is not screen_image or self._price_cache_phase != self.scan_phase:
+            self._price_cache = price_ocr_service.scan_prices(screen_image, self.scan_phase)
+            self._price_cache_image = screen_image
+            self._price_cache_phase = self.scan_phase
+            for recognized in self._price_cache:
+                self.logger.info("OCR 识别到 %s 价格：%s", recognized.slot.key, recognized.price)
+        return self._price_cache
 
     def _show_offset_area(self, x: float, y: float, title: str, description: str) -> None:
         completed = self._run_adb(["exec-out", "screencap", "-p"], capture_output=True)

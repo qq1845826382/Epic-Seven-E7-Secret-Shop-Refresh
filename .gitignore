@@ -16,3 +16,6 @@ dist/
 ShopRefreshHistory/
 ADBconfig.ini
 test/
+
+# idea
+.idea
