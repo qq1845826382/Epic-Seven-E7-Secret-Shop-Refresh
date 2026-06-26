@@ -37,6 +37,17 @@ def crop_slot(screen_image: np.ndarray, slot: PriceSlot) -> np.ndarray:
     return screen_image[top:bottom, left:right].copy()
 
 
+def crop_buy_button(screen_image: np.ndarray, slot: PriceSlot) -> np.ndarray:
+    height, width = screen_image.shape[:2]
+    scale_x = width / BASE_WIDTH
+    scale_y = height / BASE_HEIGHT
+    left = max(0, min(round(slot.buy_x_range[0] * scale_x), width))
+    right = max(left + 1, min(round(slot.buy_x_range[1] * scale_x), width))
+    top = max(0, min(round(slot.buy_y_range[0] * scale_y), height))
+    bottom = max(top + 1, min(round(slot.buy_y_range[1] * scale_y), height))
+    return screen_image[top:bottom, left:right].copy()
+
+
 def activate_window(hwnd: int) -> None:
     if win32gui.IsIconic(hwnd):
         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
@@ -78,12 +89,16 @@ def save_phase(
         region = crop_slot(screen_image, slot)
         region_path = output_dir / f"{slot.key}.png"
         Image.fromarray(region, mode="RGB").save(region_path)
+        button_region = crop_buy_button(screen_image, slot)
+        button_region_path = output_dir / f"{slot.key}_buy_button.png"
+        Image.fromarray(button_region, mode="RGB").save(button_region_path)
         try:
             price = price_ocr_service.recognize_price(region)
             result = price if price else "识别失败"
         except Exception as exc:
             result = f"OCR 异常：{exc}"
         print(f"{slot.key}: {result} -> {region_path}")
+        print(f"{slot.key} 购买按钮截图 -> {button_region_path}")
 
 
 def run_debug(window_title: str, output_root: Path) -> Path:
