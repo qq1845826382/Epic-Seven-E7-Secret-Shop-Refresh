@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import threading
 import time
 from typing import Any
@@ -47,32 +48,63 @@ class WindowCaptureService:
         self._stop_control(control)
 
     def capture_client(self, hwnd: int, timeout_seconds: float = 2.0) -> np.ndarray:
-        bgra_image = self._latest_frame(hwnd, timeout_seconds)
+        bgra_image, _ = self._latest_frame(hwnd, timeout_seconds)
         client_bgra = self._crop_client_area(bgra_image, hwnd)
         return client_bgra[:, :, [2, 1, 0]].copy()
 
-    def _latest_frame(self, hwnd: int, timeout_seconds: float) -> np.ndarray:
+    def capture_client_frame(
+        self,
+        hwnd: int,
+        timeout_seconds: float = 2.0,
+    ) -> tuple[np.ndarray, int]:
+        bgra_image, frame_seq = self._latest_frame(hwnd, timeout_seconds)
+        client_bgra = self._crop_client_area(bgra_image, hwnd)
+        return client_bgra[:, :, [2, 1, 0]].copy(), frame_seq
+
+    def capture_client_after_frame(
+        self,
+        hwnd: int,
+        previous_frame_seq: int,
+        timeout_seconds: float = 2.0,
+    ) -> tuple[np.ndarray, int]:
+        bgra_image, frame_seq = self._latest_frame(
+            hwnd,
+            timeout_seconds,
+            min_frame_seq=previous_frame_seq + 1,
+        )
+        client_bgra = self._crop_client_area(bgra_image, hwnd)
+        return client_bgra[:, :, [2, 1, 0]].copy(), frame_seq
+
+    def _latest_frame(
+        self,
+        hwnd: int,
+        timeout_seconds: float,
+        min_frame_seq: int | None = None,
+    ) -> tuple[np.ndarray, int]:
         for _ in range(2):
             self._ensure_capture(hwnd)
             deadline = time.monotonic() + timeout_seconds
             with self._condition:
-                while (
-                    self._hwnd == hwnd
-                    and self._latest_bgra is None
-                    and not self._closed
-                ):
+                while self._hwnd == hwnd and not self._closed:
+                    if (
+                        self._latest_bgra is not None
+                        and (min_frame_seq is None or self._frame_seq >= min_frame_seq)
+                    ):
+                        return self._latest_bgra.copy(), self._frame_seq
+
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         break
                     self._condition.wait(remaining)
 
-                if self._hwnd == hwnd and self._latest_bgra is not None:
-                    return self._latest_bgra.copy()
                 closed = self._closed
 
             if closed:
                 self._detach_capture()
                 continue
+
+            if min_frame_seq is not None:
+                raise RuntimeError("Timed out waiting for a fresh window frame.")
 
             raise RuntimeError("没有获取到窗口画面。")
 
@@ -94,13 +126,7 @@ class WindowCaptureService:
         old_control = self._detach_capture()
         self._stop_control(old_control)
 
-        capture = WindowsCapture(
-            cursor_capture=False,
-            draw_border=None,
-            monitor_index=None,
-            window_name=None,
-            window_hwnd=hwnd,
-        )
+        capture = self._create_capture(hwnd)
 
         @capture.event
         def on_frame_arrived(
@@ -166,6 +192,24 @@ class WindowCaptureService:
             return bool(self._capture_control.is_finished())
         except Exception:
             return True
+
+    @staticmethod
+    def _create_capture(hwnd: int) -> WindowsCapture:
+        kwargs: dict[str, Any] = {
+            "cursor_capture": False,
+            "draw_border": None,
+            "monitor_index": None,
+        }
+        parameters = inspect.signature(WindowsCapture.__init__).parameters
+        if "window_hwnd" in parameters:
+            kwargs["window_name"] = None
+            kwargs["window_hwnd"] = hwnd
+        else:
+            window_name = win32gui.GetWindowText(hwnd)
+            if not window_name:
+                raise RuntimeError("Window title is empty; cannot start capture by name.")
+            kwargs["window_name"] = window_name
+        return WindowsCapture(**kwargs)
 
     @staticmethod
     def _stop_control(control: Any | None) -> None:

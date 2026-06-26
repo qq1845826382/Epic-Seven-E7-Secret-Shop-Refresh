@@ -6,6 +6,10 @@ from typing import Any
 from app.core.models import RunConfig
 
 
+class StopRequested(Exception):
+    """Raised when the user requests the current run to stop."""
+
+
 class BaseBackend(ABC):
     def __init__(self, config: RunConfig, logger):
         self.config = config

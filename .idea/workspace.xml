@@ -5,6 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="48eeb601-9b71-4779-9a55-d61b2d6a8f12" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/Epic-Seven-E7-Secret-Shop-Refresh.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/Epic-Seven-E7-Secret-Shop-Refresh.iml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/services/window_capture_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/services/window_capture_service.py" afterDir="false" />
     </list>
@@ -27,12 +28,12 @@
     &quot;assignee&quot;: &quot;qq1845826382&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings">{
-  &quot;selectedUrlAndAccountId&quot;: {
-    &quot;url&quot;: &quot;https://github.com/qq1845826382/Epic-Seven-E7-Secret-Shop-Refresh.git&quot;,
-    &quot;accountId&quot;: &quot;30975c3e-8cc8-4d12-9886-f6652b642dc9&quot;
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/qq1845826382/Epic-Seven-E7-Secret-Shop-Refresh.git",
+    "accountId": "4b7a23c0-ee06-4d27-bc23-18cf1d4a2abe"
   }
-}</component>
+}]]></component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 3
 }</component>
@@ -44,6 +45,8 @@
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
     "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "Python.E7SecretShopRefresh.executor": "Run",
+    "Python.debug_item_regions.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.git.unshallow": "true",
     "git-widget-placeholder": "test",
@@ -85,6 +88,13 @@
         <item itemvalue="Python.E7SecretShopRefresh" />
       </list>
     </recent_temporary>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-e0ed3721d81e-36ea0e71a18c-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-251.25410.159" />
+      </set>
+    </attachedChunks>
   </component>
   <component name="TaskManager">
     <task active="true" id="Default" summary="Default task">

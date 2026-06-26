@@ -7,7 +7,7 @@ from typing import Callable, Iterable
 
 import keyboard
 
-from app.backends.base import BaseBackend
+from app.backends.base import BaseBackend, StopRequested
 from app.backends.mouse_backend import MouseBackend
 from app.core.history import write_history
 from app.core.models import ItemSelection, RunConfig, RunResult, RunStatistics
@@ -38,6 +38,22 @@ class RefreshEngine:
     def request_stop(self) -> None:
         self.stop_requested = True
 
+    def _stop_requested(self) -> bool:
+        return self.stop_requested
+
+    def _raise_if_stop_requested(self) -> None:
+        if self.stop_requested:
+            raise StopRequested()
+
+    def _sleep_interruptibly(self, seconds: float) -> None:
+        deadline = time.monotonic() + seconds
+        while True:
+            self._raise_if_stop_requested()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.05, remaining))
+
     def run(self) -> RunResult:
         if not self.selections:
             raise RuntimeError("请至少选择一个要购买的物品。")
@@ -54,8 +70,10 @@ class RefreshEngine:
         try:
             self.backend.prepare()
             self.backend.open_shop()
-            time.sleep(self.backend.page_settle_delay)
+            self._sleep_interruptibly(self.backend.page_settle_delay)
+            self._raise_if_stop_requested()
             next_top_screenshot = self.backend.capture_screen()
+            self._raise_if_stop_requested()
             if not self.backend.validate_top_prices(next_top_screenshot):
                 debug_dir = self.backend.save_debug_screenshot(
                     "open_shop_top_price_validation_failed",
@@ -68,6 +86,7 @@ class RefreshEngine:
                 raise RuntimeError("进入神秘商店后未识别到完整 item_1 到 item_4 价格。")
 
             while not self.stop_requested:
+                self._raise_if_stop_requested()
                 self._scan_page(next_top_screenshot)
                 next_top_screenshot = None
                 if self.stop_requested:
@@ -75,7 +94,7 @@ class RefreshEngine:
                     break
 
                 self.backend.scroll_shop()
-                time.sleep(self.backend.scroll_settle_delay)
+                self._sleep_interruptibly(self.backend.scroll_settle_delay)
 
                 # The bottom phase only recognizes item_5 and item_6, so it
                 # must scan every selected item again. Skipping an item type
@@ -92,6 +111,9 @@ class RefreshEngine:
                     break
 
                 next_top_screenshot = self._refresh_shop_until_top_ready()
+        except StopRequested:
+            stop_reason = "用户手动停止"
+            error_message = None
         except Exception as exc:
             stop_reason = "运行异常结束"
             error_message = str(exc)
@@ -115,20 +137,25 @@ class RefreshEngine:
         return result
 
     def _build_backend(self) -> BaseBackend:
-        return MouseBackend(self.config, self.logger)
+        return MouseBackend(self.config, self.logger, self._stop_requested)
 
     def _load_templates(self) -> None:
         for selection in self.selections:
             selection.template = self.backend.load_template(selection.item.file_name)
 
     def _scan_page(self, screenshot=None) -> None:
+        self._raise_if_stop_requested()
         if screenshot is None:
             screenshot = self.backend.capture_screen()
+        self._raise_if_stop_requested()
         for selection in self.selections:
+            self._raise_if_stop_requested()
             position = self.backend.find_item_position(screenshot, selection.template)
+            self._raise_if_stop_requested()
             if position is None:
                 continue
             self.backend.buy_item(position)
+            self._raise_if_stop_requested()
             selection.count += 1
             self.statistics.gold_spent += selection.item.price
             self.logger.info(
@@ -144,7 +171,9 @@ class RefreshEngine:
     def _refresh_shop_until_top_ready(self):
         last_debug_dir = ""
         for attempt in range(1, REFRESH_RETRY_LIMIT + 1):
+            self._raise_if_stop_requested()
             self.backend.refresh_shop()
+            self._raise_if_stop_requested()
             self.statistics.refresh_count += 1
             self._emit_statistics(stop_reason="运行中")
             self.logger.info(
@@ -153,10 +182,12 @@ class RefreshEngine:
                 self.statistics.skystone_spent,
             )
 
-            time.sleep(POST_REFRESH_VALIDATE_WAIT_SECONDS)
+            self._sleep_interruptibly(POST_REFRESH_VALIDATE_WAIT_SECONDS)
             screenshot = self.backend.capture_screen()
+            self._raise_if_stop_requested()
             if self.backend.validate_top_prices(screenshot):
                 return screenshot
+            self._raise_if_stop_requested()
 
             last_debug_dir = self.backend.save_debug_screenshot(
                 "refresh_top_price_validation_failed",
@@ -173,7 +204,7 @@ class RefreshEngine:
                 last_debug_dir,
                 RECOVERY_WAIT_SECONDS,
             )
-            time.sleep(RECOVERY_WAIT_SECONDS)
+            self._sleep_interruptibly(RECOVERY_WAIT_SECONDS)
             self.backend.click_screen_center()
 
         self.logger.error(

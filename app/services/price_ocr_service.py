@@ -70,7 +70,10 @@ class PriceOCRService:
 
     @staticmethod
     def clean_price_text(text: str) -> str:
-        return re.sub(r"\D", "", text)
+        digits = re.sub(r"\D", "", text)
+        if len(digits) > 1 and digits.endswith("1"):
+            return digits[:-1]
+        return digits
 
     def _get_engine(self):
         if self._engine is None:
