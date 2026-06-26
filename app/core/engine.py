@@ -14,6 +14,10 @@ from app.core.models import ItemSelection, RunConfig, RunResult, RunStatistics
 
 StatisticsCallback = Callable[[RunStatistics], None]
 
+REFRESH_RETRY_LIMIT = 3
+RECOVERY_WAIT_SECONDS = 5.0
+POST_REFRESH_VALIDATE_WAIT_SECONDS = 1.0
+
 
 class RefreshEngine:
     def __init__(
@@ -50,9 +54,22 @@ class RefreshEngine:
         try:
             self.backend.prepare()
             self.backend.open_shop()
+            time.sleep(self.backend.page_settle_delay)
+            next_top_screenshot = self.backend.capture_screen()
+            if not self.backend.validate_top_prices(next_top_screenshot):
+                debug_dir = self.backend.save_debug_screenshot(
+                    "open_shop_top_price_validation_failed",
+                    next_top_screenshot,
+                )
+                self.logger.error(
+                    "进入神秘商店后未识别到完整 item_1 到 item_4 价格，截图目录：%s。",
+                    debug_dir,
+                )
+                raise RuntimeError("进入神秘商店后未识别到完整 item_1 到 item_4 价格。")
+
             while not self.stop_requested:
-                time.sleep(self.backend.page_settle_delay)
-                self._scan_page()
+                self._scan_page(next_top_screenshot)
+                next_top_screenshot = None
                 if self.stop_requested:
                     stop_reason = "用户手动停止"
                     break
@@ -74,14 +91,7 @@ class RefreshEngine:
                     stop_reason = "已达到天空石预算"
                     break
 
-                self.backend.refresh_shop()
-                self.statistics.refresh_count += 1
-                self._emit_statistics(stop_reason="运行中")
-                self.logger.info(
-                    "已完成第 %s 次刷新，已消耗 %s 天空石。",
-                    self.statistics.refresh_count,
-                    self.statistics.skystone_spent,
-                )
+                next_top_screenshot = self._refresh_shop_until_top_ready()
         except Exception as exc:
             stop_reason = "运行异常结束"
             error_message = str(exc)
@@ -111,8 +121,9 @@ class RefreshEngine:
         for selection in self.selections:
             selection.template = self.backend.load_template(selection.item.file_name)
 
-    def _scan_page(self) -> None:
-        screenshot = self.backend.capture_screen()
+    def _scan_page(self, screenshot=None) -> None:
+        if screenshot is None:
+            screenshot = self.backend.capture_screen()
         for selection in self.selections:
             position = self.backend.find_item_position(screenshot, selection.template)
             if position is None:
@@ -129,6 +140,50 @@ class RefreshEngine:
             self._emit_statistics(stop_reason="运行中")
             if self.stop_requested:
                 break
+
+    def _refresh_shop_until_top_ready(self):
+        last_debug_dir = ""
+        for attempt in range(1, REFRESH_RETRY_LIMIT + 1):
+            self.backend.refresh_shop()
+            self.statistics.refresh_count += 1
+            self._emit_statistics(stop_reason="运行中")
+            self.logger.info(
+                "已完成第 %s 次刷新，已消耗 %s 天空石。",
+                self.statistics.refresh_count,
+                self.statistics.skystone_spent,
+            )
+
+            time.sleep(POST_REFRESH_VALIDATE_WAIT_SECONDS)
+            screenshot = self.backend.capture_screen()
+            if self.backend.validate_top_prices(screenshot):
+                return screenshot
+
+            last_debug_dir = self.backend.save_debug_screenshot(
+                "refresh_top_price_validation_failed",
+                screenshot,
+            )
+            if attempt >= REFRESH_RETRY_LIMIT:
+                break
+
+            self.logger.warning(
+                "刷新后未识别到完整 item_1 到 item_4 价格，第 %s/%s 次校验失败，截图目录：%s。"
+                "等待 %.0f 秒后点击屏幕中心并重新刷新。",
+                attempt,
+                REFRESH_RETRY_LIMIT,
+                last_debug_dir,
+                RECOVERY_WAIT_SECONDS,
+            )
+            time.sleep(RECOVERY_WAIT_SECONDS)
+            self.backend.click_screen_center()
+
+        self.logger.error(
+            "刷新后连续 %s 次未识别到完整 item_1 到 item_4 价格，最后截图目录：%s。",
+            REFRESH_RETRY_LIMIT,
+            last_debug_dir,
+        )
+        raise RuntimeError(
+            f"刷新后连续 {REFRESH_RETRY_LIMIT} 次未识别到完整 item_1 到 item_4 价格。"
+        )
 
     def _all_targets_reached(self) -> bool:
         has_target = False

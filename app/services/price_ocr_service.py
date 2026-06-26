@@ -62,9 +62,11 @@ class PriceOCRService:
         self._get_engine()
 
     def recognize_price(self, image: np.ndarray) -> str:
+        return self.clean_price_text(self.recognize_text(image))
+
+    def recognize_text(self, image: np.ndarray) -> str:
         result = self._get_engine()(self._preprocess(image))
-        text = "".join(self._extract_texts(result))
-        return self.clean_price_text(text)
+        return "".join(self._extract_texts(result)).replace(" ", "")
 
     @staticmethod
     def clean_price_text(text: str) -> str:

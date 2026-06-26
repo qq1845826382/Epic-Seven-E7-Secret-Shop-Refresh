@@ -1,20 +1,39 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 import random
 import time
 
+import cv2
+import numpy as np
 import pyautogui
 import pygetwindow as gw
 
 from app.backends.base import BaseBackend
-from app.core.constants import ITEM_DEFINITIONS
+from app.core.constants import ITEM_DEFINITIONS, PROJECT_ROOT
 from app.services.price_ocr_service import (
     BASE_HEIGHT,
     BASE_WIDTH,
     PRICE_SLOTS,
+    PriceSlot,
     price_ocr_service,
 )
 from app.services.window_capture_service import window_capture_service
+
+
+BUY_RETRY_LIMIT = 3
+RECOVERY_WAIT_SECONDS = 5.0
+POST_CONFIRM_VERIFY_WAIT_SECONDS = 0.5
+GRAY_MEAN_DIFF_THRESHOLD = 40.0
+
+
+@dataclass(frozen=True)
+class PurchaseTarget:
+    slot: PriceSlot
+    price: str
+    buy_position: tuple[float, float]
 
 
 class MouseBackend(BaseBackend):
@@ -94,24 +113,101 @@ class MouseBackend(BaseBackend):
     def cleanup(self) -> None:
         window_capture_service.stop()
 
-    def find_item_position(self, screen_image, template) -> tuple[float, float] | None:
+    def validate_top_prices(self, screen_image) -> bool:
+        original_phase = self.scan_phase
+        self.scan_phase = "top"
+        try:
+            recognized = self._scan_price_slots(screen_image)
+        finally:
+            self.scan_phase = original_phase
+
+        prices_by_key = {
+            item.slot.key: item.price
+            for item in recognized
+            if item.slot.phase == "top"
+        }
+        return all(
+            len(prices_by_key.get(f"item_{index}", "")) > 4
+            for index in range(1, 5)
+        )
+
+    def find_item_position(self, screen_image, template) -> PurchaseTarget | None:
         target_price = str(template)
         for recognized in self._scan_price_slots(screen_image):
             if recognized.price == target_price:
-                return self._scaled_random_point(recognized.slot.buy_x_range, recognized.slot.buy_y_range)
+                return PurchaseTarget(
+                    slot=recognized.slot,
+                    price=recognized.price,
+                    buy_position=self._scaled_random_point(
+                        recognized.slot.buy_x_range,
+                        recognized.slot.buy_y_range,
+                    ),
+                )
         return None
 
-    def buy_item(self, position: tuple[float, float]) -> None:
-        x, y = position
-        pyautogui.moveTo(x, y)
-        pyautogui.click(clicks=2, interval=self.config.mouse_sleep)
-        time.sleep(self.config.mouse_sleep)
+    def buy_item(self, target: PurchaseTarget) -> None:
+        last_reason = "未知错误"
+        for attempt in range(1, BUY_RETRY_LIMIT + 1):
+            before_image = self.capture_screen()
+            before_button = self._crop_buy_button(before_image, target.slot)
+            before_text = price_ocr_service.recognize_text(before_button)
+            self.logger.info(
+                "购买前按钮 OCR：%s 为“%s”。",
+                target.slot.key,
+                before_text or "空",
+            )
+            if "1/1" not in before_text:
+                last_reason = f"{target.slot.key} 购买前按钮未识别到 1/1"
+                self._log_retry_and_recover(last_reason, attempt, before_image, before_button)
+                continue
 
-        x, y = self._scaled_random_point((1000, 1275), (740, 790))
-        pyautogui.moveTo(x, y)
-        pyautogui.click(clicks=2, interval=self.config.mouse_sleep)
-        time.sleep(self.config.mouse_sleep)
-        time.sleep(self.config.screenshot_sleep)
+            x, y = target.buy_position
+            pyautogui.moveTo(x, y)
+            pyautogui.click(clicks=2, interval=self.config.mouse_sleep)
+            time.sleep(self.config.mouse_sleep)
+
+            after_buy_image = self.capture_screen()
+            gray_diff = self._gray_mean_diff(before_image, after_buy_image)
+            self.logger.info("点击购买后灰度均值差：%.2f。", gray_diff)
+            if gray_diff < GRAY_MEAN_DIFF_THRESHOLD:
+                last_reason = (
+                    f"点击购买后画面灰度变化不足 "
+                    f"({gray_diff:.2f} < {GRAY_MEAN_DIFF_THRESHOLD:.2f})"
+                )
+                self._log_retry_and_recover(
+                    last_reason,
+                    attempt,
+                    before_image,
+                    before_button,
+                    after_buy_image,
+                )
+                continue
+
+            x, y = self._scaled_random_point((1000, 1275), (740, 790))
+            pyautogui.moveTo(x, y)
+            pyautogui.click(clicks=2, interval=self.config.mouse_sleep)
+            time.sleep(POST_CONFIRM_VERIFY_WAIT_SECONDS)
+
+            after_confirm_image = self.capture_screen()
+            after_confirm_button = self._crop_buy_button(after_confirm_image, target.slot)
+            after_confirm_text = price_ocr_service.recognize_text(after_confirm_button)
+            self.logger.info(
+                "确认购买后按钮 OCR：%s 为“%s”。",
+                target.slot.key,
+                after_confirm_text or "空",
+            )
+            if "0/1" in after_confirm_text:
+                return
+
+            last_reason = f"{target.slot.key} 确认购买后未识别到 0/1"
+            self._log_retry_and_recover(
+                last_reason,
+                attempt,
+                after_confirm_image,
+                after_confirm_button,
+            )
+
+        raise RuntimeError(f"购买失败，已重试 {BUY_RETRY_LIMIT} 次：{last_reason}")
 
     def scroll_shop(self) -> None:
         # Keep the stable vertical swipe used by the original mouse flow:
@@ -145,12 +241,101 @@ class MouseBackend(BaseBackend):
         self.scan_phase = "top"
         self._clear_price_cache()
 
+    def click_screen_center(self) -> None:
+        x, y = self._relative_point(0.5, 0.5)
+        pyautogui.moveTo(x, y)
+        pyautogui.click()
+
+    def save_debug_screenshot(self, reason: str, image) -> str:
+        return str(self._save_debug_images(reason, image))
+
     def _activate_window(self) -> None:
         try:
             self.window.activate()
         except Exception:
             # Some emulators refuse activation intermittently; the original script tolerated this.
             pass
+
+    def _log_retry_and_recover(
+        self,
+        reason: str,
+        attempt: int,
+        full_image: np.ndarray,
+        button_image: np.ndarray,
+        after_image: np.ndarray | None = None,
+    ) -> None:
+        debug_dir = self._save_debug_images(reason, full_image, button_image, after_image)
+        if attempt >= BUY_RETRY_LIMIT:
+            self.logger.error(
+                "%s，第 %s/%s 次尝试失败，异常截图目录：%s。",
+                reason,
+                attempt,
+                BUY_RETRY_LIMIT,
+                debug_dir,
+            )
+            return
+
+        self.logger.warning(
+            "%s，第 %s/%s 次尝试失败，异常截图目录：%s。等待 %.0f 秒后点击屏幕中心并重试。",
+            reason,
+            attempt,
+            BUY_RETRY_LIMIT,
+            debug_dir,
+            RECOVERY_WAIT_SECONDS,
+        )
+        time.sleep(RECOVERY_WAIT_SECONDS)
+        self.click_screen_center()
+
+    def _save_debug_images(
+        self,
+        reason: str,
+        full_image: np.ndarray,
+        button_image: np.ndarray | None = None,
+        after_image: np.ndarray | None = None,
+    ) -> Path:
+        safe_reason = "".join(
+            char if char.isascii() and (char.isalnum() or char in "-_") else "_"
+            for char in reason
+        ).strip("_")[:48] or "capture"
+        output_dir = (
+            PROJECT_ROOT
+            / "debug_captures"
+            / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self._write_rgb_image(output_dir / f"{safe_reason}_full.png", full_image)
+        if button_image is not None:
+            self._write_rgb_image(output_dir / f"{safe_reason}_button.png", button_image)
+        if after_image is not None:
+            self._write_rgb_image(output_dir / f"{safe_reason}_after.png", after_image)
+        return output_dir
+
+    @staticmethod
+    def _write_rgb_image(path: Path, image: np.ndarray) -> None:
+        cv2.imwrite(str(path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+
+    @staticmethod
+    def _gray_mean_diff(before_image: np.ndarray, after_image: np.ndarray) -> float:
+        if before_image.shape[:2] != after_image.shape[:2]:
+            after_image = cv2.resize(
+                after_image,
+                (before_image.shape[1], before_image.shape[0]),
+                interpolation=cv2.INTER_AREA,
+            )
+        before_gray = cv2.cvtColor(before_image, cv2.COLOR_RGB2GRAY)
+        after_gray = cv2.cvtColor(after_image, cv2.COLOR_RGB2GRAY)
+        return float(abs(before_gray.mean() - after_gray.mean()))
+
+    @staticmethod
+    def _crop_buy_button(screen_image: np.ndarray, slot: PriceSlot) -> np.ndarray:
+        height, width = screen_image.shape[:2]
+        scale_x = width / BASE_WIDTH
+        scale_y = height / BASE_HEIGHT
+        left = max(0, min(round(slot.buy_x_range[0] * scale_x), width))
+        right = max(left + 1, min(round(slot.buy_x_range[1] * scale_x), width))
+        top = max(0, min(round(slot.buy_y_range[0] * scale_y), height))
+        bottom = max(top + 1, min(round(slot.buy_y_range[1] * scale_y), height))
+        return screen_image[top:bottom, left:right].copy()
 
     def _scan_price_slots(self, screen_image):
         if self._price_cache_image is not screen_image or self._price_cache_phase != self.scan_phase:

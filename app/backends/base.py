@@ -38,11 +38,15 @@ class BaseBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def find_item_position(self, screen_image, template) -> tuple[float, float] | None:
+    def validate_top_prices(self, screen_image) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    def buy_item(self, position: tuple[float, float]) -> None:
+    def find_item_position(self, screen_image, template) -> Any | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def buy_item(self, position: Any) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -51,6 +55,14 @@ class BaseBackend(ABC):
 
     @abstractmethod
     def refresh_shop(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def click_screen_center(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def save_debug_screenshot(self, reason: str, image) -> str:
         raise NotImplementedError
 
     def cleanup(self) -> None:
