@@ -128,7 +128,10 @@ def main() -> None:
         help="截图输出根目录，默认：debug_item_regions",
     )
     args = parser.parse_args()
-    run_debug(args.window_title, args.output)
+    try:
+        run_debug(args.window_title, args.output)
+    finally:
+        window_capture_service.stop()
 
 
 if __name__ == "__main__":

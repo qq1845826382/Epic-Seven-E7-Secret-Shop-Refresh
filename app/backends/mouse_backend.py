@@ -56,6 +56,7 @@ class MouseBackend(BaseBackend):
                 self.window.moveTo(0, 0)
             self.window.resizeTo(906, 539)
             self._activate_window()
+            window_capture_service.start_client_capture(self.hwnd)
             self.logger.info("已连接模拟器窗口：%s", title)
         except Exception as exc:  # pragma: no cover - pygetwindow depends on host environment
             raise RuntimeError(f"初始化模拟器窗口失败：{exc}") from exc
@@ -89,6 +90,9 @@ class MouseBackend(BaseBackend):
         if self.hwnd is None:
             raise RuntimeError("窗口尚未初始化。")
         return window_capture_service.capture_client(self.hwnd)
+
+    def cleanup(self) -> None:
+        window_capture_service.stop()
 
     def find_item_position(self, screen_image, template) -> tuple[float, float] | None:
         target_price = str(template)
