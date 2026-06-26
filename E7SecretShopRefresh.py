@@ -6,4 +6,4 @@ from app.bootstrap import run_app
 
 
 if __name__ == "__main__":
-    sys.exit(run_app(default_mode="mouse", from_legacy_entry=False))
+    sys.exit(run_app())

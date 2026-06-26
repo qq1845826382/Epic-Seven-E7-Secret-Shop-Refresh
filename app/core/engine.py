@@ -7,7 +7,6 @@ from typing import Callable, Iterable
 
 import keyboard
 
-from app.backends.adb_backend import ADBBackend
 from app.backends.base import BaseBackend
 from app.backends.mouse_backend import MouseBackend
 from app.core.history import write_history
@@ -29,7 +28,7 @@ class RefreshEngine:
         self.on_statistics = on_statistics
         self.logger = logger or logging.getLogger("e7shop")
         self.stop_requested = False
-        self.statistics = RunStatistics(mode=config.mode, budget=config.budget)
+        self.statistics = RunStatistics(budget=config.budget)
         self.backend: BaseBackend = self._build_backend()
 
     def request_stop(self) -> None:
@@ -53,19 +52,18 @@ class RefreshEngine:
             self.backend.open_shop()
             while not self.stop_requested:
                 time.sleep(self.backend.page_settle_delay)
-                purchased_keys = set()
-                self._scan_page(purchased_keys)
+                self._scan_page()
                 if self.stop_requested:
                     stop_reason = "用户手动停止"
-                    break
-                if self._all_targets_reached():
-                    stop_reason = "已达到全部目标数量"
                     break
 
                 self.backend.scroll_shop()
                 time.sleep(self.backend.scroll_settle_delay)
 
-                self._scan_page(purchased_keys, skip_purchased=True)
+                # The bottom phase only recognizes item_5 and item_6, so it
+                # must scan every selected item again. Skipping an item type
+                # bought on the top page can miss another copy below.
+                self._scan_page()
                 if self.stop_requested:
                     stop_reason = "用户手动停止"
                     break
@@ -93,7 +91,6 @@ class RefreshEngine:
             duration = time.time() - start_time
             self.statistics.stop_reason = stop_reason
             result = RunResult(
-                mode=self.config.mode,
                 statistics=self.statistics.clone(),
                 duration_seconds=duration,
                 stop_reason=stop_reason,
@@ -108,28 +105,21 @@ class RefreshEngine:
         return result
 
     def _build_backend(self) -> BaseBackend:
-        if self.config.mode == "mouse":
-            return MouseBackend(self.config, self.logger)
-        if self.config.mode == "adb":
-            return ADBBackend(self.config, self.logger)
-        raise RuntimeError(f"未知模式：{self.config.mode}")
+        return MouseBackend(self.config, self.logger)
 
     def _load_templates(self) -> None:
         for selection in self.selections:
             selection.template = self.backend.load_template(selection.item.file_name)
 
-    def _scan_page(self, purchased_keys: set[str], skip_purchased: bool = False) -> None:
+    def _scan_page(self) -> None:
         screenshot = self.backend.capture_screen()
         for selection in self.selections:
-            if skip_purchased and selection.item.key in purchased_keys:
-                continue
             position = self.backend.find_item_position(screenshot, selection.template)
             if position is None:
                 continue
             self.backend.buy_item(position)
             selection.count += 1
             self.statistics.gold_spent += selection.item.price
-            purchased_keys.add(selection.item.key)
             self.logger.info(
                 "已购买 %s，当前数量 %s%s。",
                 selection.item.display_name,
@@ -137,8 +127,6 @@ class RefreshEngine:
                 f"/{selection.target_count}" if selection.target_count else "",
             )
             self._emit_statistics(stop_reason="运行中")
-            if self._all_targets_reached():
-                break
             if self.stop_requested:
                 break
 

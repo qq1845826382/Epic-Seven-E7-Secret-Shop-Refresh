@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
-
-RunMode = Literal["mouse", "adb"]
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -32,24 +30,16 @@ class ItemSelection:
 
 @dataclass
 class RunConfig:
-    mode: RunMode
     budget: int | None
     stop_key: str = "esc"
     mouse_window_title: str = ""
     auto_move_window: bool = True
     mouse_sleep: float = 0.3
     screenshot_sleep: float = 0.3
-    adb_device_id: str = ""
-    adb_manual_address: str = ""
-    adb_random_offset: bool = False
-    adb_debug: bool = False
-    adb_tap_sleep: float = 0.3
-    from_legacy_entry: bool = False
 
 
 @dataclass
 class RunStatistics:
-    mode: RunMode
     budget: int | None
     start_time: datetime = field(default_factory=datetime.now)
     refresh_count: int = 0
@@ -69,7 +59,6 @@ class RunStatistics:
 
     def clone(self) -> "RunStatistics":
         return RunStatistics(
-            mode=self.mode,
             budget=self.budget,
             start_time=self.start_time,
             refresh_count=self.refresh_count,
@@ -81,7 +70,6 @@ class RunStatistics:
 
 @dataclass
 class RunResult:
-    mode: RunMode
     statistics: RunStatistics
     duration_seconds: float
     stop_reason: str

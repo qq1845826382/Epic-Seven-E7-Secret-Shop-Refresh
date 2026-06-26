@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QStackedWidget,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -31,17 +30,13 @@ from qfluentwidgets import BodyLabel, CardWidget, ComboBox, LineEdit, PrimaryPus
 
 from app.core.constants import APP_CONFIG_PATH, ASSETS_DIR, DEFAULT_MOUSE_SLEEP, DEFAULT_SCREENSHOT_SLEEP, DEFAULT_STOP_KEY, DEFAULT_TITLES, ITEM_DEFINITIONS, WINDOW_ICON_PATH
 from app.core.models import ItemSelection, RunConfig, RunResult, RunStatistics
-from app.services.adb_service import ADBService
 from app.ui.logging_bridge import QtLogHandler
 from app.ui.workers import RefreshWorker
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, default_mode: str = "mouse", from_legacy_entry: bool = False):
+    def __init__(self):
         super().__init__()
-        self.default_mode = default_mode
-        self.from_legacy_entry = from_legacy_entry
-        self.adb_service = ADBService()
         self.worker_thread: QThread | None = None
         self.worker: RefreshWorker | None = None
         self.item_controls: dict[str, dict[str, object]] = {}
@@ -71,14 +66,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self.load_app_config()
-        self.load_adb_config(show_message=False)
         self.refresh_windows()
-        self.refresh_devices()
-        self.mode_combo.setCurrentIndex(0 if self.default_mode == "mouse" else 1)
-        self.update_mode_ui()
-
-        if self.from_legacy_entry:
-            self.logger.info("已自动切换到 ADB 模式。")
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -91,7 +79,7 @@ class MainWindow(QMainWindow):
 
         # QTabWidget 将“运行前配置”和“运行中观察”拆开：
         # 1. 配置页只保留启动前需要处理的内容，减少首屏纵向堆叠。
-        # 2. 运行页合并鼠标/ADB 的共同统计指标，切换模式后依然只看同一组刷新数据。
+        # 2. 运行页集中展示刷新统计与日志。
         self.main_tabs = QTabWidget()
         self.main_tabs.setDocumentMode(True)
         self.main_tabs.addTab(self._build_setup_tab(), "运行前")
@@ -115,7 +103,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(scroll_area)
 
         self.setup_layout.addWidget(self._build_general_card())
-        self.setup_layout.addWidget(self._build_mode_card())
+        self.setup_layout.addWidget(self._build_window_card())
         self.setup_layout.addWidget(self._build_items_card())
         self.setup_layout.addStretch(1)
         return tab
@@ -156,12 +144,6 @@ class MainWindow(QMainWindow):
         self._configure_form_layout(form)
         card.layout().addLayout(form)
 
-        self.mode_combo = ComboBox()
-        self.mode_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.mode_combo.addItems(["鼠标模式", "ADB 模式"])
-        self.mode_combo.currentIndexChanged.connect(self.update_mode_ui)
-        form.addRow("运行模式", self.mode_combo)
-
         self.budget_spin = self._create_int_spin(0, 100000000, special_text="不限", suffix=" 天空石")
         form.addRow("天空石预算", self.budget_spin)
 
@@ -183,12 +165,9 @@ class MainWindow(QMainWindow):
         card.layout().addLayout(buttons)
         return card
 
-    def _build_mode_card(self) -> QWidget:
-        card = self._create_card("模式设置")
-        self.mode_stack = QStackedWidget()
-        self.mode_stack.addWidget(self._build_mouse_page())
-        self.mode_stack.addWidget(self._build_adb_page())
-        card.layout().addWidget(self.mode_stack)
+    def _build_window_card(self) -> QWidget:
+        card = self._create_card("窗口与截图设置")
+        card.layout().addWidget(self._build_mouse_page())
         return card
 
     def _build_mouse_page(self) -> QWidget:
@@ -219,52 +198,6 @@ class MainWindow(QMainWindow):
         form.addRow("鼠标速度", self.mouse_sleep_spin)
         form.addRow("截图等待", self.screenshot_sleep_spin)
         layout.addLayout(form)
-        return page
-
-    def _build_adb_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        form = QFormLayout()
-        self._configure_form_layout(form)
-        self.device_combo = ComboBox()
-        self.device_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.refresh_devices_button = PushButton("刷新设备")
-        self.refresh_devices_button.clicked.connect(self.refresh_devices)
-        device_row = QHBoxLayout()
-        device_row.addWidget(self.device_combo)
-        device_row.addWidget(self.refresh_devices_button)
-        form.addRow("ADB 设备", self._wrap_layout(device_row))
-
-        self.manual_address_input = LineEdit()
-        self.manual_address_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.manual_address_input.setPlaceholderText("例如 localhost:5555")
-        self.connect_device_button = PushButton("连接地址")
-        self.connect_device_button.clicked.connect(self.connect_manual_device)
-        address_row = QHBoxLayout()
-        address_row.addWidget(self.manual_address_input)
-        address_row.addWidget(self.connect_device_button)
-        form.addRow("手动连接", self._wrap_layout(address_row))
-
-        self.adb_tap_sleep_spin = self._create_double_spin(0.01, 10.0, 0.3, step=0.05, suffix=" 秒")
-        self.random_offset_checkbox = QCheckBox("启用随机点击偏移")
-        self.adb_debug_checkbox = QCheckBox("启用 ADB 调试模式")
-        form.addRow("点击等待", self.adb_tap_sleep_spin)
-        form.addRow("随机偏移", self.random_offset_checkbox)
-        form.addRow("调试模式", self.adb_debug_checkbox)
-
-        actions = QHBoxLayout()
-        self.load_adb_button = PushButton("读取 ADB 配置")
-        self.save_adb_button = PushButton("保存 ADB 配置")
-        self.load_adb_button.clicked.connect(self.load_adb_config)
-        self.save_adb_button.clicked.connect(self.save_adb_config)
-        actions.addWidget(self.load_adb_button)
-        actions.addWidget(self.save_adb_button)
-        actions.addStretch(1)
-
-        layout.addLayout(form)
-        layout.addLayout(actions)
         return page
 
     def _build_items_card(self) -> QWidget:
@@ -321,7 +254,6 @@ class MainWindow(QMainWindow):
         card.layout().addLayout(grid)
 
         labels = [
-            ("当前模式", "mode"),
             ("刷新次数", "refresh_count"),
             ("天空石消耗", "skystone_spent"),
             ("金币消耗", "gold_spent"),
@@ -456,15 +388,6 @@ class MainWindow(QMainWindow):
         if self.item_count_grid is not None and self._item_count_column_count() != self.item_count_columns:
             self._refresh_item_count_labels(self.latest_item_counts)
 
-    def update_mode_ui(self) -> None:
-        index = self.mode_combo.currentIndex()
-        self.mode_stack.setCurrentIndex(index)
-        is_mouse = index == 0
-        self.mouse_sleep_spin.setEnabled(is_mouse)
-        self.screenshot_sleep_spin.setEnabled(is_mouse)
-        self.adb_tap_sleep_spin.setEnabled(not is_mouse)
-        self.status_labels["mode"].setText("鼠标模式" if is_mouse else "ADB 模式")
-
     def refresh_windows(self) -> None:
         available_titles = [title for title in gw.getAllTitles() if title.strip()]
         preferred = [title for title in DEFAULT_TITLES if title in available_titles]
@@ -479,44 +402,15 @@ class MainWindow(QMainWindow):
         if titles and not self.window_title_input.text().strip():
             self.window_title_input.setText(titles[0])
 
-    def refresh_devices(self) -> None:
-        devices = self.adb_service.list_devices()
-        self.device_combo.clear()
-        self.device_combo.addItems(devices)
-        if not devices:
-            self.append_log("未检测到任何 ADB 设备。")
-        else:
-            self.append_log(f"已检测到 {len(devices)} 个 ADB 设备。")
-
-    def connect_manual_device(self) -> None:
-        address = self.manual_address_input.text().strip()
-        if not address:
-            self.show_error("请输入要连接的 ADB 地址。")
-            return
-        success, message = self.adb_service.connect_device(address)
-        self.append_log(message or "ADB 连接命令已执行。")
-        if success:
-            self.refresh_devices()
-        else:
-            self.show_error("ADB 地址连接失败，请检查模拟器调试配置。")
-
     def collect_run_config(self) -> RunConfig:
         budget = self.budget_spin.value() or None
-        mode = "mouse" if self.mode_combo.currentIndex() == 0 else "adb"
         return RunConfig(
-            mode=mode,
             budget=budget,
             stop_key=self.stop_key_input.text().strip() or DEFAULT_STOP_KEY,
             mouse_window_title=self.window_title_input.text().strip(),
             auto_move_window=self.auto_move_checkbox.isChecked(),
             mouse_sleep=self.mouse_sleep_spin.value(),
             screenshot_sleep=self.screenshot_sleep_spin.value(),
-            adb_device_id=self.device_combo.currentText().strip(),
-            adb_manual_address=self.manual_address_input.text().strip(),
-            adb_random_offset=self.random_offset_checkbox.isChecked(),
-            adb_debug=self.adb_debug_checkbox.isChecked(),
-            adb_tap_sleep=self.adb_tap_sleep_spin.value(),
-            from_legacy_entry=self.from_legacy_entry,
         )
 
     def collect_selections(self) -> list[ItemSelection]:
@@ -536,8 +430,8 @@ class MainWindow(QMainWindow):
         config = self.collect_run_config()
         selections = self.collect_selections()
 
-        if config.mode == "mouse" and not config.mouse_window_title:
-            self.show_error("鼠标模式必须先选择或输入模拟器窗口标题。")
+        if not config.mouse_window_title:
+            self.show_error("必须先选择或输入模拟器窗口标题。")
             return
         if not any(selection.enabled for selection in selections):
             self.show_error("请至少选择一个要购买的物品。")
@@ -584,7 +478,6 @@ class MainWindow(QMainWindow):
         self.worker_thread = None
 
     def update_statistics(self, statistics: RunStatistics) -> None:
-        self.status_labels["mode"].setText("鼠标模式" if statistics.mode == "mouse" else "ADB 模式")
         self.status_labels["refresh_count"].setText(str(statistics.refresh_count))
         self.status_labels["skystone_spent"].setText(str(statistics.skystone_spent))
         self.status_labels["gold_spent"].setText(f"{statistics.gold_spent:,}")
@@ -646,7 +539,6 @@ class MainWindow(QMainWindow):
     def set_running_state(self, running: bool) -> None:
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
-        self.mode_combo.setEnabled(not running)
 
     def append_log(self, message: str) -> None:
         self.log_output.appendPlainText(message)
@@ -655,31 +547,6 @@ class MainWindow(QMainWindow):
     def show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)
 
-    def save_adb_config(self) -> None:
-        values = {
-            "tap_sleep": str(self.adb_tap_sleep_spin.value()),
-            "budget": str(self.budget_spin.value()),
-            "stop_refresh_key": self.stop_key_input.text().strip() or DEFAULT_STOP_KEY,
-            "random_offset": str(self.random_offset_checkbox.isChecked()),
-            "debug": str(self.adb_debug_checkbox.isChecked()),
-        }
-        path = self.adb_service.save_config(values)
-        self.append_log(f"ADB 配置已保存到：{path}")
-
-    def load_adb_config(self, show_message: bool = True) -> None:
-        values = self.adb_service.load_config()
-        if not values:
-            if show_message:
-                self.append_log("未找到 ADB 配置文件，将使用当前界面设置。")
-            return
-        self.adb_tap_sleep_spin.setValue(float(values.get("tap_sleep", 0.3)))
-        self.budget_spin.setValue(int(float(values.get("budget", 0))))
-        self.stop_key_input.setText(values.get("stop_refresh_key", DEFAULT_STOP_KEY))
-        self.random_offset_checkbox.setChecked(values.get("random_offset", "False").lower() == "true")
-        self.adb_debug_checkbox.setChecked(values.get("debug", "False").lower() == "true")
-        if show_message:
-            self.append_log("已读取 ADB 配置。")
-
     def load_app_config(self) -> None:
         path = Path(APP_CONFIG_PATH)
         if not path.exists():
@@ -687,14 +554,11 @@ class MainWindow(QMainWindow):
         config = configparser.ConfigParser()
         config.read(path, encoding="utf-8")
         general = config["general"] if config.has_section("general") else {}
-        self.mode_combo.setCurrentIndex(0 if general.get("mode", self.default_mode) == "mouse" else 1)
         self.window_title_input.setText(general.get("mouse_window_title", ""))
         self.auto_move_checkbox.setChecked(general.get("auto_move_window", "True").lower() == "true")
         self.mouse_sleep_spin.setValue(float(general.get("mouse_sleep", DEFAULT_MOUSE_SLEEP)))
         self.screenshot_sleep_spin.setValue(float(general.get("screenshot_sleep", DEFAULT_SCREENSHOT_SLEEP)))
-        self.adb_tap_sleep_spin.setValue(float(general.get("adb_tap_sleep", 0.3)))
         self.stop_key_input.setText(general.get("stop_key", DEFAULT_STOP_KEY))
-        self.manual_address_input.setText(general.get("adb_manual_address", ""))
 
         for item in ITEM_DEFINITIONS:
             if not config.has_section(item.key):
@@ -706,14 +570,11 @@ class MainWindow(QMainWindow):
     def save_app_config(self) -> None:
         config = configparser.ConfigParser()
         config["general"] = {
-            "mode": "mouse" if self.mode_combo.currentIndex() == 0 else "adb",
             "mouse_window_title": self.window_title_input.text().strip(),
             "auto_move_window": str(self.auto_move_checkbox.isChecked()),
             "mouse_sleep": str(self.mouse_sleep_spin.value()),
             "screenshot_sleep": str(self.screenshot_sleep_spin.value()),
-            "adb_tap_sleep": str(self.adb_tap_sleep_spin.value()),
             "stop_key": self.stop_key_input.text().strip() or DEFAULT_STOP_KEY,
-            "adb_manual_address": self.manual_address_input.text().strip(),
         }
         for item in ITEM_DEFINITIONS:
             config[item.key] = {

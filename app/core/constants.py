@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from app.core.models import ItemDefinition
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_DIR = PROJECT_ROOT / "assets"
-ADB_ASSETS_DIR = PROJECT_ROOT / "adb-assets"
-ADB_PLATFORM_TOOLS_DIR = ADB_ASSETS_DIR / "platform-tools"
-ADB_EXECUTABLE = ADB_PLATFORM_TOOLS_DIR / ("adb.exe" if os.name == "nt" else "adb")
 HISTORY_DIR = PROJECT_ROOT / "ShopRefreshHistory"
-ADB_CONFIG_PATH = PROJECT_ROOT / "ADBconfig.ini"
 APP_CONFIG_PATH = PROJECT_ROOT / "app_config.ini"
 WINDOW_ICON_PATH = ASSETS_DIR / "gui_icon.ico"
 
@@ -30,9 +25,6 @@ DEFAULT_TITLES = sorted(
 DEFAULT_STOP_KEY = "esc"
 DEFAULT_MOUSE_SLEEP = 0.3
 DEFAULT_SCREENSHOT_SLEEP = 0.3
-DEFAULT_ADB_TAP_SLEEP = 0.3
-SUPPORTED_ADB_WIDTH = 1920
-SUPPORTED_ADB_HEIGHT = 1080
 
 ITEM_DEFINITIONS = [
     ItemDefinition(

@@ -136,12 +136,12 @@ def apply_dark_mode(app: QApplication) -> None:
     )
 
 
-def run_app(default_mode: str = "mouse", from_legacy_entry: bool = False) -> int:
+def run_app() -> int:
     set_windows_app_id()
     app = QApplication.instance() or QApplication(sys.argv)
     if WINDOW_ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(WINDOW_ICON_PATH)))
     apply_dark_mode(app)
-    window = MainWindow(default_mode=default_mode, from_legacy_entry=from_legacy_entry)
+    window = MainWindow()
     window.show()
     return app.exec()

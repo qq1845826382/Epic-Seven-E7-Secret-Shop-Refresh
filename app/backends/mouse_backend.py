@@ -3,20 +3,25 @@ from __future__ import annotations
 import random
 import time
 
-import numpy as np
 import pyautogui
 import pygetwindow as gw
-from PIL import ImageGrab
 
 from app.backends.base import BaseBackend
 from app.core.constants import ITEM_DEFINITIONS
-from app.services.price_ocr_service import BASE_HEIGHT, BASE_WIDTH, price_ocr_service
+from app.services.price_ocr_service import (
+    BASE_HEIGHT,
+    BASE_WIDTH,
+    PRICE_SLOTS,
+    price_ocr_service,
+)
+from app.services.window_capture_service import window_capture_service
 
 
 class MouseBackend(BaseBackend):
     def __init__(self, config, logger):
         super().__init__(config, logger)
         self.window = None
+        self.hwnd: int | None = None
         self.scan_phase = "top"
         self._price_cache_phase: str | None = None
         self._price_cache_image = None
@@ -28,7 +33,7 @@ class MouseBackend(BaseBackend):
 
     @property
     def scroll_settle_delay(self) -> float:
-        return max(0.3, self.config.screenshot_sleep)
+        return 1.0
 
     def prepare(self) -> None:
         price_ocr_service.ensure_ready()
@@ -42,6 +47,8 @@ class MouseBackend(BaseBackend):
         if self.window is None:
             raise RuntimeError(f'未找到窗口标题为“{title}”的模拟器。')
 
+        self.hwnd = window_capture_service.find_window(title)
+
         try:
             if self.window.isMaximized or self.window.isMinimized:
                 self.window.restore()
@@ -49,7 +56,7 @@ class MouseBackend(BaseBackend):
                 self.window.moveTo(0, 0)
             self.window.resizeTo(906, 539)
             self._activate_window()
-            self.logger.info("已连接鼠标模式窗口：%s", title)
+            self.logger.info("已连接模拟器窗口：%s", title)
         except Exception as exc:  # pragma: no cover - pygetwindow depends on host environment
             raise RuntimeError(f"初始化模拟器窗口失败：{exc}") from exc
 
@@ -62,33 +69,26 @@ class MouseBackend(BaseBackend):
     def open_shop(self) -> None:
         self._activate_window()
 
-        x = self.window.left + self.window.width * 0.05
-        y = self.window.top + self.window.height * 0.41
+        x, y = self._relative_point(0.05, 0.41)
         pyautogui.moveTo(x, y)
         pyautogui.click()
         time.sleep(self.config.mouse_sleep)
 
-        x = self.window.left + self.window.width * 0.44
-        y = self.window.top + self.window.height * 0.26
+        x, y = self._relative_point(0.44, 0.26)
         pyautogui.moveTo(x, y)
         pyautogui.click()
         time.sleep(self.config.mouse_sleep)
 
-        x = self.window.left + self.window.width * 0.05
-        y = self.window.top + self.window.height * 0.41
+        x, y = self._relative_point(0.05, 0.41)
         pyautogui.moveTo(x, y)
         pyautogui.click()
         self.scan_phase = "top"
         self.logger.info("已进入神秘商店页面。")
 
     def capture_screen(self):
-        self._activate_window()
-        region = [self.window.left, self.window.top, self.window.width, self.window.height]
-        screenshot = ImageGrab.grab(
-            bbox=(region[0], region[1], region[2] + region[0], region[3] + region[1]),
-            all_screens=True,
-        )
-        return np.array(screenshot)
+        if self.hwnd is None:
+            raise RuntimeError("窗口尚未初始化。")
+        return window_capture_service.capture_client(self.hwnd)
 
     def find_item_position(self, screen_image, template) -> tuple[float, float] | None:
         target_price = str(template)
@@ -110,37 +110,36 @@ class MouseBackend(BaseBackend):
         time.sleep(self.config.screenshot_sleep)
 
     def scroll_shop(self) -> None:
-        x1, y1 = self._scaled_point(
-            1050 + random.randint(-50, 50),
-            500 + random.randint(-50, 50),
-        )
-        x2, y2 = self._scaled_point(
-            1250 + random.randint(-50, 50),
-            50 + random.randint(-50, 50),
-        )
-        pyautogui.moveTo(x1, y1)
+        # Keep the stable vertical swipe used by the original mouse flow:
+        # start around 65% of the client height and move upward by 27.7%.
+        # A larger diagonal swipe can overscroll the list or fail to expose
+        # item 5 and item 6 consistently on different emulator sizes.
+        x, start_y = self._relative_point(0.58, 0.65)
+        _, end_y = self._relative_point(0.58, 0.65 - 0.277)
+        pyautogui.moveTo(x, start_y)
         time.sleep(0.05)
         pyautogui.mouseDown(button="left")
         time.sleep(0.05)
-        pyautogui.moveTo(x2, y2)
+        pyautogui.moveTo(x, end_y)
         time.sleep(0.05)
         pyautogui.mouseUp(button="left")
         time.sleep(0.05)
         self.scan_phase = "bottom"
+        self._clear_price_cache()
+        self.logger.info("已向上滑动商店，将固定等待 1 秒后识别 item_5 和 item_6。")
 
     def refresh_shop(self) -> None:
-        x = self.window.left + self.window.width * 0.20
-        y = self.window.top + self.window.height * 0.90
+        x, y = self._relative_point(0.20, 0.90)
         pyautogui.moveTo(x, y)
         pyautogui.click(clicks=2, interval=self.config.mouse_sleep)
         time.sleep(self.config.mouse_sleep)
 
-        x = self.window.left + self.window.width * 0.58
-        y = self.window.top + self.window.height * 0.65
+        x, y = self._relative_point(0.58, 0.65)
         pyautogui.moveTo(x, y)
         pyautogui.click(clicks=2, interval=self.config.mouse_sleep)
         time.sleep(self.config.screenshot_sleep)
         self.scan_phase = "top"
+        self._clear_price_cache()
 
     def _activate_window(self) -> None:
         try:
@@ -156,9 +155,44 @@ class MouseBackend(BaseBackend):
             self._price_cache = price_ocr_service.scan_prices(screen_image, self.scan_phase, scale_x, scale_y)
             self._price_cache_image = screen_image
             self._price_cache_phase = self.scan_phase
-            for recognized in self._price_cache:
-                self.logger.info("OCR 识别到 %s 价格：%s", recognized.slot.key, recognized.price)
+            self._log_price_scan_result()
         return self._price_cache
+
+    def _log_price_scan_result(self) -> None:
+        recognized_by_key = {
+            recognized.slot.key: recognized.price
+            for recognized in self._price_cache
+        }
+        phase_slots = [
+            slot
+            for slot in PRICE_SLOTS
+            if slot.phase == self.scan_phase
+        ]
+        for slot in phase_slots:
+            price = recognized_by_key.get(slot.key)
+            if price:
+                self.logger.info("OCR 识别成功：%s 价格为 %s", slot.key, price)
+            else:
+                self.logger.warning(
+                    "OCR 识别失败：%s 未识别到有效价格。",
+                    slot.key,
+                )
+
+        if self.scan_phase == "bottom":
+            success_count = sum(
+                slot.key in recognized_by_key
+                for slot in phase_slots
+            )
+            self.logger.info(
+                "底部识别完成：item_5/item_6 成功 %s 个，失败 %s 个。",
+                success_count,
+                len(phase_slots) - success_count,
+            )
+
+    def _clear_price_cache(self) -> None:
+        self._price_cache_phase = None
+        self._price_cache_image = None
+        self._price_cache = []
 
     def _scaled_random_point(
         self,
@@ -171,7 +205,15 @@ class MouseBackend(BaseBackend):
         )
 
     def _scaled_point(self, x: float, y: float) -> tuple[float, float]:
-        return (
-            self.window.left + x * self.window.width / BASE_WIDTH,
-            self.window.top + y * self.window.height / BASE_HEIGHT,
+        if self.hwnd is None:
+            raise RuntimeError("窗口尚未初始化。")
+        client_left, client_top, client_width, client_height = (
+            window_capture_service.get_client_bounds(self.hwnd)
         )
+        return (
+            client_left + x * client_width / BASE_WIDTH,
+            client_top + y * client_height / BASE_HEIGHT,
+        )
+
+    def _relative_point(self, x_ratio: float, y_ratio: float) -> tuple[float, float]:
+        return self._scaled_point(BASE_WIDTH * x_ratio, BASE_HEIGHT * y_ratio)

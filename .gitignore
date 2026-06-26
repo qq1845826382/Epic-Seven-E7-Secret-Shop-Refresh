@@ -14,6 +14,7 @@ dist/
 
 # E7SecretShopRefresh.py
 ShopRefreshHistory/
+debug_item_regions/
 ADBconfig.ini
 test/
 

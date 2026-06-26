@@ -1,1 +1,1 @@
-"""Service helpers for configuration and external integrations."""
+"""Screenshot and OCR services."""
